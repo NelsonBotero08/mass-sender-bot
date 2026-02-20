@@ -1,4 +1,4 @@
-import { Controller, Post, UseInterceptors, UploadedFile, Body, BadRequestException, UseGuards, SetMetadata, Get } from '@nestjs/common';
+import { Controller, Post, UseInterceptors, UploadedFile, Body, BadRequestException, UseGuards, SetMetadata, Get, Param, Delete } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { parse } from 'csv-parse/sync';
@@ -6,8 +6,9 @@ import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { RolesGuard } from 'src/auth/roles.guard';
 import { UserRole } from 'src/auth/entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
-import { MoreThan, Repository } from 'typeorm';
+import { In, MoreThan, Repository } from 'typeorm';
 import { Message } from 'src/whatsapp/entities/message.entity';
+import { Template } from 'src/whatsapp/entities/template.entity';
 
 interface CsvRecord {
   telefono: string;
@@ -20,43 +21,49 @@ export class BulkController {
     private readonly whatsappService: WhatsappService,
     @InjectRepository(Message)
     private readonly messageRepo: Repository<Message>,
+    @InjectRepository(Template) private templateRepo: Repository<Template>,
   ) {}
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @SetMetadata('roles', [UserRole.ADMIN])
-  @Post('upload')
-  @UseInterceptors(FileInterceptor('file'))
-  async uploadCsv(
-    @UploadedFile() file: Express.Multer.File,
-    @Body('template') template: string, // Ejemplo: "Hola {{nombre}}, ¿cómo estás?"
-  ) {
-    if (!file) throw new BadRequestException('El archivo CSV es obligatorio');
-    if (!template) throw new BadRequestException('El texto del mensaje es obligatorio');
+@SetMetadata('roles', [UserRole.ADMIN])
+@Post('upload')
+@UseInterceptors(FileInterceptor('file'))
+async uploadCsv(
+  @UploadedFile() file: Express.Multer.File,
+  @Body('templates') templatesRaw: string | string[], // El cliente envía sus plantillas aquí
+) {
+  if (!file) throw new BadRequestException('El archivo CSV es obligatorio');
+  if (!templatesRaw) throw new BadRequestException('Debes enviar al menos una plantilla');
 
-    try {
-      // Procesar CSV
-        const records = parse(file.buffer, {
-            columns: true,
-            skip_empty_lines: true,
-            delimiter: ';',
-        }) as CsvRecord[];
+  try {
+    // 1. Convertir plantillas a Array si vienen como string
+    const templates = Array.isArray(templatesRaw) 
+      ? templatesRaw 
+      : [templatesRaw];
 
-      // Validar que el CSV tenga las columnas correctas
-      if (records.length === 0 || !records[0].telefono) {
-        throw new BadRequestException('El CSV debe tener al menos la columna "telefono"');
-      }
+    // 2. Procesar CSV con Tipado para evitar 'unknown'
+    const records = parse(file.buffer, {
+      columns: true,
+      skip_empty_lines: true,
+      delimiter: ';',
+      bom: true,
+    }) as any[]; // Usamos any[] para que TS nos deje acceder a las propiedades dinámicas
 
-      // Iniciamos el proceso (sin await para no bloquear la respuesta al cliente)
-      this.whatsappService.sendMassMessages(records, template);
-
-      return {
-        success: true,
-        message: `Proceso iniciado para ${records.length} contactos.`,
-      };
-    } catch (error) {
-      throw new BadRequestException('Error al procesar el CSV: ' + error.message);
+    if (records.length === 0 || !records[0].telefono) {
+      throw new BadRequestException('El CSV debe tener la columna "telefono"');
     }
+
+    // 3. Pasamos records y las plantillas del cliente al servicio
+    this.whatsappService.sendMassMessages(records, templates);
+
+    return {
+      success: true,
+      message: `Proceso iniciado con ${records.length} contactos y ${templates.length} plantillas personalizadas.`,
+    };
+  } catch (error) {
+    throw new BadRequestException('Error: ' + error.message);
   }
+}
 
   @Get('stats')
   async getStats() {
@@ -80,4 +87,102 @@ export class BulkController {
       timestamp: new Date().toISOString(),
     };
   }
+
+  @Get('report')
+  async getMassiveReport() {
+    // Usamos getRawOne porque COUNT FILTER es SQL puro
+    const data = await this.messageRepo.createQueryBuilder('msg')
+      .select('COUNT(*)', 'total')
+      // ack 3 = Entregado (Doble check gris)
+      // ack 4 = Leído (Doble check azul)
+      .addSelect('COUNT(*) FILTER (WHERE ack >= 3)', 'delivered') 
+      .addSelect('COUNT(*) FILTER (WHERE ack = 4)', 'read')
+      .getRawOne();
+
+    return {
+      enviados: parseInt(data.total),
+      entregados: parseInt(data.delivered),
+      leidos: parseInt(data.read),
+      pendientes: parseInt(data.total) - parseInt(data.delivered)
+    };
+  }
+
+
+@Post('validate')
+async validateTemplates(
+  @Body() body: { columns: string[], templateIds: number[] }
+) {
+  const { columns, templateIds } = body;
+  
+  // 1. Buscamos las plantillas en la DB
+  const templates = await this.templateRepo.find({
+    where: { id: In(templateIds) }
+  });
+
+  const report = templates.map(template => {
+    const requiredVars = this.whatsappService.extractVariables(template.content);
+    
+    // 2. Verificamos si todas las variables requeridas están en las columnas del CSV
+    const missingVars = requiredVars.filter(v => !columns.includes(v));
+    
+    return {
+      id: template.id,
+      name: template.name,
+      isValid: missingVars.length === 0,
+      missingVariables: missingVars,
+      requiredVariables: requiredVars
+    };
+  });
+
+  // 3. Si hay alguna inválida, avisamos al front
+  const hasErrors = report.some(r => !r.isValid);
+
+  return {
+    canProceed: !hasErrors,
+    details: report
+  };
+}
+
+@Get('last-messages')
+async getLastMessages() {
+  return await this.messageRepo.find({
+    order: { sentAt: 'DESC' } as any, 
+    take: 10
+  });
+}
+
+// Obtener todas las plantillas guardadas
+@UseGuards(JwtAuthGuard)
+@Get('templates')
+async getTemplates() {
+  return await this.templateRepo.find({
+    order: { createdAt: 'DESC' }
+  });
+}
+
+// Crear una nueva plantilla
+@UseGuards(JwtAuthGuard, RolesGuard)
+@SetMetadata('roles', [UserRole.ADMIN])
+@Post('templates')
+async createTemplate(@Body() body: { name: string; content: string }) {
+  if (!body.name || !body.content) {
+    throw new BadRequestException('El nombre y el contenido son obligatorios');
+  }
+
+  const newTemplate = this.templateRepo.create({
+    name: body.name,
+    content: body.content,
+  });
+
+  return await this.templateRepo.save(newTemplate);
+}
+
+// Eliminar una plantilla
+@UseGuards(JwtAuthGuard, RolesGuard)
+@SetMetadata('roles', [UserRole.ADMIN])
+@Delete('templates/:id')
+async deleteTemplate(@Param('id') id: number) {
+  await this.templateRepo.delete(id);
+  return { success: true, message: 'Plantilla eliminada' };
+}
 }

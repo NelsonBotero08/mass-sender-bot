@@ -1,8 +1,17 @@
+// main.ts (Backend)
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  await app.listen(process.env.PORT ?? 3000);
+
+  // Habilitar CORS
+  app.enableCors({
+    origin: ['http://localhost:3000', 'http://localhost:3001'], // Las URLs de tu Next.js
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
+    credentials: true,
+  });
+
+  await app.listen(3000); // Asegúrate de que este sea el puerto que usa Axios en el front
 }
 bootstrap();

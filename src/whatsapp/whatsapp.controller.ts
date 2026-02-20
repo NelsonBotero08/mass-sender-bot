@@ -3,7 +3,7 @@ import { WhatsappService } from './whatsapp.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { UserRole } from '../auth/entities/user.entity';
-import * as qrImage from 'qr-image';
+import * as QRCode from 'qrcode';
 
 @UseGuards(JwtAuthGuard, RolesGuard) // Protege todo el controlador
 @SetMetadata('roles', [UserRole.ADMIN]) // Solo permite ADMIN
@@ -20,27 +20,20 @@ export class WhatsappController {
     }
 
     if (info.qr) {
-      return { 
-        message: 'Necesita escaneo', 
-        connected: false, 
-        qr: info.qr 
-      };
+      try {
+        // ESTA ES LA CLAVE: Convertimos el string de Baileys a Base64 real
+        const qrBase64 = await QRCode.toDataURL(info.qr);
+        return { 
+          message: 'Necesita escaneo', 
+          connected: false, 
+          qr: qrBase64 
+        };
+      } catch (err) {
+        return { message: 'Error generando QR', connected: false };
+      }
     }
 
     return { message: 'Iniciando servicio...', connected: false };
-  }
-
-  @Get('qr-image')
-  async getQrImage(@Res() res) {
-    const info = this.whatsappService.getStatus();
-    
-    if (!info.qr) {
-      return res.status(400).json({ message: 'No hay QR disponible o ya está conectado' });
-    }
-
-    const code = qrImage.image(info.qr, { type: 'png' });
-    res.type('image/png');
-    return code.pipe(res);
   }
 
   @Post('init') 
