@@ -9,6 +9,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, MoreThan, Repository } from 'typeorm';
 import { Message } from 'src/whatsapp/entities/message.entity';
 import { Template } from 'src/whatsapp/entities/template.entity';
+import { BulkService } from './bulk.service';
 
 interface CsvRecord {
   telefono: string;
@@ -22,6 +23,7 @@ export class BulkController {
     @InjectRepository(Message)
     private readonly messageRepo: Repository<Message>,
     @InjectRepository(Template) private templateRepo: Repository<Template>,
+    private readonly bulkService: BulkService,
   ) {}
 
   @UseGuards(JwtAuthGuard, RolesGuard)
@@ -30,35 +32,56 @@ export class BulkController {
 @UseInterceptors(FileInterceptor('file'))
 async uploadCsv(
   @UploadedFile() file: Express.Multer.File,
-  @Body('templates') templatesRaw: string | string[], // El cliente envía sus plantillas aquí
+  @Body('templates') templatesRaw: string | string[], 
 ) {
   if (!file) throw new BadRequestException('El archivo CSV es obligatorio');
   if (!templatesRaw) throw new BadRequestException('Debes enviar al menos una plantilla');
 
   try {
-    // 1. Convertir plantillas a Array si vienen como string
-    const templates = Array.isArray(templatesRaw) 
-      ? templatesRaw 
-      : [templatesRaw];
+    // --- CAMBIO AQUÍ: Normalización de plantillas ---
+    let templates: string[] = [];
+    
+    if (Array.isArray(templatesRaw)) {
+      templates = templatesRaw.map(t => String(t).trim());
+    } else if (typeof templatesRaw === 'string') {
+      // Si llega con formato ["texto"], lo parseamos para extraer el contenido
+      if (templatesRaw.startsWith('[') && templatesRaw.endsWith(']')) {
+        try {
+          const parsed = JSON.parse(templatesRaw);
+          templates = Array.isArray(parsed) ? parsed.map(t => String(t).trim()) : [String(parsed).trim()];
+        } catch (e) {
+          // Si falla el parseo, lo tratamos como string normal y separamos por comas
+          templates = templatesRaw.split(',').map(t => t.trim());
+        }
+      } else {
+        // Si es un string simple separado por comas
+        templates = templatesRaw.split(',').map(t => t.trim());
+      }
+    }
+    
+    // Filtramos posibles entradas vacías
+    templates = [...new Set(templates.filter(t => t.length > 0))];
+    // ------------------------------------------------
 
-    // 2. Procesar CSV con Tipado para evitar 'unknown'
+    // 2. Procesar CSV
     const records = parse(file.buffer, {
       columns: true,
       skip_empty_lines: true,
       delimiter: ';',
       bom: true,
-    }) as any[]; // Usamos any[] para que TS nos deje acceder a las propiedades dinámicas
+    }) as any[];
 
     if (records.length === 0 || !records[0].telefono) {
       throw new BadRequestException('El CSV debe tener la columna "telefono"');
     }
 
-    // 3. Pasamos records y las plantillas del cliente al servicio
+    // 3. Pasamos records y las plantillas limpias
+    // El servicio ahora usará templates[i % templates.length]
     this.whatsappService.sendMassMessages(records, templates);
 
     return {
       success: true,
-      message: `Proceso iniciado con ${records.length} contactos y ${templates.length} plantillas personalizadas.`,
+      message: `Proceso iniciado con ${records.length} contactos y ${templates.length} plantillas rotando.`,
     };
   } catch (error) {
     throw new BadRequestException('Error: ' + error.message);
@@ -67,6 +90,12 @@ async uploadCsv(
 
   @Get('stats')
   async getStats() {
+    // Llamamos directamente a la lógica del servicio que tiene el formato correcto
+    return await this.bulkService.getStats();
+  }
+
+  @Get('stats-reports')
+  async getStatsReports() {
     // Calculamos estadísticas de las últimas 24 horas o totales
     const total = await this.messageRepo.count();
     const sent = await this.messageRepo.count({ where: { status: 'SENT' } });

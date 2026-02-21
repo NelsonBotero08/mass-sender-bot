@@ -129,24 +129,22 @@ export class WhatsappService implements OnModuleInit {
 
       // 1. DETECTAR SI EL MENSAJE PROVIENE DE "MI" (fromMe)
       if (msg.key.fromMe) {
-        // Un mensaje es del BOT solo si tiene los prefijos de la librería
-        const isSentByMyCode = messageId.startsWith('BAE5') || messageId.startsWith('3EB0');
+        const messageId = msg.key.id || '';
+        // Detectamos si es un mensaje de sistema
+        const isSentByMyCode = messageId.startsWith('BAE5') || messageId.startsWith('3EB0') || messageId.startsWith('3A');
 
-        if (!isSentByMyCode) {
-          // Si no tiene esos prefijos, significa que lo enviaste tú desde el CELULAR o WHATSAPP WEB
-          this.logger.log(`🕵️‍♂️ Intervención manual real detectada (ID: ${messageId}). Desactivando bot para ${cleanId}`);
-          
-          await this.statusRepo.upsert(
-            { 
-              user_number: cleanId, 
-              estatus: 0, 
-              updated_at: new Date() 
-            },
-            ['user_number']
-          );
-        } else {
-          this.logger.debug(`🤖 Respuesta automática del bot (${messageId}).`);
+        if (isSentByMyCode) {
+          // 🚀 IMPORTANTE: Si es masivo o respuesta del bot, salimos SIN guardar nada en statusRepo
+          this.logger.debug(`🤖 Mensaje de sistema ignorado para DB de estados: ${messageId}`);
+          return; 
         }
+
+        // Si llegamos aquí, es porque tú escribiste manualmente desde el celular
+        this.logger.log(`🕵️‍♂️ Intervención manual detectada. Desactivando bot para ${cleanId}`);
+        await this.statusRepo.upsert(
+          { user_number: cleanId, estatus: 0, updated_at: new Date() },
+          ['user_number']
+        );
         return; 
       }
 
@@ -195,32 +193,44 @@ export class WhatsappService implements OnModuleInit {
   async sendMassMessages(contacts: any[], customTemplates: string[]) {
     if (!this.socket) return;
 
-    this.logger.log(`Iniciando envío masivo con intervalos irregulares.`);
+    this.logger.log(`🚀 Iniciando envío masivo a ${contacts.length} contactos con rotación secuencial.`);
 
     for (let i = 0; i < contacts.length; i++) {
-      const contact = contacts[i];
-      const jid = `${contact.telefono}@s.whatsapp.net`;
-      const rawContent = customTemplates[Math.floor(Math.random() * customTemplates.length)];
-      const messageText = this.parseTemplate(rawContent, contact);
+        const contact = contacts[i];
+        const jid = `${contact.telefono}@s.whatsapp.net`;
 
-      try {
-        // Usamos el método sendMessage que ya tiene el delay de escritura
-        await this.sendMessage(jid, messageText);
+        // 🔄 LOGICA DE ROTACIÓN SECUENCIAL:
+        // El operador % (módulo) asegura que si i=0 usa la plantilla 0, i=1 la 1, etc.
+        // Cuando i llega al total de plantillas, vuelve a empezar desde 0.
+        const templateIndex = i % customTemplates.length;
+        const rawContent = customTemplates[templateIndex];
+        
+        const messageText = this.parseTemplate(rawContent, contact);
 
-        // Guardar en repo... (tu lógica de base de datos)
+        this.logger.log(`📝 Contacto ${i + 1}/${contacts.length} - Usando plantilla #${templateIndex + 1}`);
 
-        // 3. INTERVALO ENTRE CONTACTOS (Muy importante para evitar bloqueos)
-        if (i < contacts.length - 1) {
-          // Definimos un rango de entre 45 y 95 segundos
-          // Pero el resultado será un número como 67.432ms, nunca 60.000ms exactos
-          const waitTime = Math.floor(Math.random() * (95000 - 45000 + 1)) + 45000;
-          
-          this.logger.log(`Esperando ${waitTime / 1000}s para el siguiente envío...`);
-          await delay(waitTime);
+        try {
+            const sentMsg = await this.sendMessage(jid, messageText);
+
+            if (sentMsg) {
+                await this.messageRepo.save({
+                    phone: contact.telefono,
+                    content: messageText,
+                    status: 'SENT',
+                    timestamp: new Date(),
+                    type: 'OUTGOING'
+                });
+            }
+
+            // Intervalo anti-bloqueo
+            if (i < contacts.length - 1) {
+                const waitTime = Math.floor(Math.random() * (95000 - 45000 + 1)) + 45000;
+                this.logger.log(`⏳ Esperando ${waitTime / 1000}s...`);
+                await delay(waitTime);
+            }
+        } catch (e) {
+            this.logger.error(`❌ Error en ${contact.telefono}: ${e.message}`);
         }
-      } catch (e) {
-        this.logger.error(`Error en ${contact.telefono}: ${e.message}`);
-      }
     }
   }
 

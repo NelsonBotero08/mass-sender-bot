@@ -16,120 +16,267 @@ export class ChatbotService {
   ) {}
 
   async handleBotLogic(from: string, body: string) {
-  // 1. BUSCAR al usuario tal cual viene (sea @lid o @s.whatsapp.net)
-  let status = await this.statusRepo.findOne({ where: { user_number: from } });
+    const text = body.toLowerCase();
 
-  // 2. Si no existe, crearlo con el ID exacto que recibimos
-  if (!status) {
-    status = await this.statusRepo.save({
-      user_number: from,
-      menu: 1,
-      estatus: 1,
-      bot: 'principal'
-    });
-    return this.sendMenu1(from);
+    // 1. Comando de escape para el usuario
+    if (text.includes('asesor')) {
+      await this.statusRepo.update({ user_number: from }, { estatus: 0 });
+      return;
+    }
+
+    let status = await this.statusRepo.findOne({ where: { user_number: from } });
+
+    // 2. BIENVENIDA: Si el usuario es nuevo, enviamos el Menú de Lucía
+    if (!status) {
+      status = await this.statusRepo.save({
+        user_number: from,
+        menu: 1,
+        estatus: 1,
+        bot: 'principal'
+      });
+      return this.sendMenu1(from);
+    }
+
+    if (Number(status.estatus) !== 1) return;
+
+    const option = body.trim().replace(/[^\w\s]/gi, ''); 
+    
+    this.logger.log(`🤖 Lucía procesando [${option}] para ${from} en Menú ${status.menu}`);
+
+    // 3. SWITCH DE NAVEGACIÓN
+    switch (status.menu) {
+      case 1:
+        await this.handleMenu1(from, option);
+        break;
+
+      case 2:
+        await this.handleMarquillas(from, option);
+        break;
+
+      case 4:
+        await this.handleEtiquetasCarton(from, option); 
+        break;  
+
+       case 6:
+        await this.handleGarras(from, option); 
+        break;  
+    }
   }
-
-  // 3. Si el bot está apagado (estatus 0), no responder
-  if (Number(status.estatus) !== 1) return;
-
-  // 4. LIMPIEZA DE LA OPCIÓN
-  // Quitamos espacios, emojis y dejamos solo números/letras
-  const option = body.trim().toUpperCase().replace(/[^\w\s]/gi, '');
-  
-  this.logger.log(`🤖 Procesando [${option}] para el usuario ${from} en Menú ${status.menu}`);
-
-  switch (status.menu) {
-    case 1:
-      // Usamos el 'from' original para responder al ID correcto (@lid o @s.whatsapp.net)
-      if (option === '1') {
-        await this.statusRepo.update({ user_number: from }, { menu: 2 });
-        await this.sendMenu2(from);
-      } else if (option === '2') {
-        await this.whatsappService.sendMessage(from, "Entendido. Estaremos listos cuando decidas escalar tu producción. ¡Feliz día! 😊");
-        await this.statusRepo.update({ user_number: from }, { estatus: 0 });
-      } else {
-        await this.whatsappService.sendMessage(from, "⚠️ Por favor, selecciona una opción válida (1 o 2).");
-      }
-      break;
-
-    case 2:
-      await this.handleMenu2(from, option);
-      break;
-
-    case 3:
-      await this.handleMenu3(from, body);
-      break;
-  }
-}
 
   // --- CONTROLADORES DE MENÚ ---
 
   private async sendMenu1(jid: string) {
-    const message = `¡Hola! Gracias por escribir 👋 En *Marca-tex* le ponemos el sello final a tus creaciones con la mejor calidad en marquillas 🧵.
+    const message = `¡Hola! Bienvenid@ a *Marca-Tex*. 🧵 
+    
+  Soy *Lucía*, tu asesora experta en insumos de identificación de marca. Es un placer saludarte. 
 
-⚠️ *IMPORTANTE:* Nuestra fabricación mínima es de *300 metros lineales*.
+  Por favor, escribe el *NÚMERO* del producto en el que estás interesado para darte los requisitos de fabricación:
 
-¿Deseas continuar con tu cotización?
-1️⃣ Sí, acepto las condiciones.
-2️⃣ No por el momento.`;
+  1️⃣ Marquillas Tejidas o Satín (Alta definición)
+  2️⃣ Cartón o Etiquetas para ropa
+  3️⃣ Garras Sintéticas (Cuero/Sintético)
+  4️⃣ Placas en Zamak (Lujo metálico)
+  5️⃣ Apliques (Brillos, PVC, Bordados e Importados)`;
+
     await this.whatsappService.sendMessage(jid, message);
   }
 
   private async handleMenu1(jid: string, option: string) {
-    if (option === '1') {
-      await this.statusRepo.update({ user_number: jid }, { menu: 2 });
-      await this.sendMenu2(jid);
-    } else if (option === '2') {
-      await this.whatsappService.sendMessage(jid, "Entendido. Estaremos listos cuando decidas escalar tu producción. ¡Feliz día! 😊");
-      await this.statusRepo.update({ user_number: jid }, { estatus: 0 }); 
-    } else {
-      await this.whatsappService.sendMessage(jid, "⚠️ Por favor, selecciona una opción válida escribiendo el número *1* o *2*.");
+    // Evaluamos las 4 nuevas opciones
+    switch (option) {
+      case '1':
+      await this.statusRepo.update({ user_number: jid }, { menu: 2 }); 
+      const msgMarquillas = `1️⃣ *Marquillas Tejidas o Satín*
+      
+Te informamos que, para mantener nuestros estándares de calidad y acabados de alta costura, fabricamos pedidos a partir de *300 metros por diseño*.
+
+Si tu pedido iguala o supera esta cantidad, selecciona una opción:
+1. Sí, requiero 300m o más.
+2. Busco una cantidad menor.
+
+responde con las opciones numericas segun corresponda.`;
+      await this.whatsappService.sendMessage(jid, msgMarquillas);
+      break;
+        
+      case '2':
+          await this.statusRepo.update({ user_number: jid }, { menu: 4 }); 
+          const msgCarton = `🏷️ *Etiquetas de Cartón / Tags*
+
+Para mantener nuestros estándares de calidad industrial y ofrecerte el mejor precio por unidad, manejamos una producción mínima de *3.000 etiquetas por diseño*.
+
+¿Tu pedido iguala o supera esta cantidad?
+1. Sí, requiero 3.000 o más.
+2. Busco una cantidad menor.
+
+responde con las opciones numericas segun corresponda.`;
+      await this.whatsappService.sendMessage(jid, msgCarton);
+      break;
+
+      case '3':
+          await this.statusRepo.update({ user_number: jid }, { menu: 6 });
+          const msgGarras = `3️⃣ *Garras en cuero sintético*
+
+¡Excelente elección! Nuestras garras sintéticas son ideales para darle ese toque de resistencia y exclusividad a tus jeans, chaquetas o accesorios. 🧥👞
+
+Para garantizar la máxima precisión en el grabado o relieve de tu diseño, nuestra línea de producción especializada requiere un mínimo de *3.000 unidades por referencia*.
+
+¿Tu proyecto requiere esta cantidad o una superior?
+
+1. Sí, requiero 3.000 o más.
+2. Busco una cantidad menor.
+
+responde con las opciones numericas segun corresponda.`;
+
+  await this.whatsappService.sendMessage(jid, msgGarras);
+  break;
+
+      case '4':
+      await this.statusRepo.update({ user_number: jid }, { menu: 8 });
+      const msgZamak = `4️⃣ *Placas en Zamak (Lujo metálico)*
+
+¡Excelente elección! Las placas en Zamak son el sello de lujo definitivo para tus prendas y accesorios. ✨
+
+Debido al proceso de fundición y creación de moldes personalizados de alta precisión, nuestra producción mínima es de *3.000 unidades por diseño*. 🛠️
+
+¿Tu proyecto requiere esta cantidad o una superior para iniciar la cotización?
+
+1. Sí, requiero 3.000 o más.
+2. Busco una cantidad menor.
+
+responde con las opciones numericas segun corresponda.`;
+      await this.whatsappService.sendMessage(jid, msgZamak);
+      break;
+
+      case '5':
+        await this.statusRepo.update({ user_number: jid }, { menu: 10 });
+        const msgApliques = `5️⃣ *Apliques infantiles y camisetas*
+
+  ¡Qué genial! Los apliques son la forma más rápida de darle identidad y valor a tus prendas. 👕✨
+
+  Trabajamos con diferentes tecnologías. ¿Qué estilo buscas para tu colección?
+  A) Brillos / Pedrería.
+  B) PVC / Goma (Relieve).
+  C) Bordados Personalizados.
+  D) Apliques Importados (Tendencia).
+  
+  responde con las opciones en letra segun corresponda.`;
+        await this.whatsappService.sendMessage(jid, msgApliques);
+
+        await this.statusRepo.update({ user_number: jid }, { estatus: 0 });
+        break;
+
+      default:
+        await this.whatsappService.sendMessage(jid, "⚠️ Por favor, selecciona una opción válida (1 al 5).");
+        break;
     }
   }
 
-  private async sendMenu2(jid: string) {
-    const message = `¡Excelente elección! 🚀 Aquí tienes el rendimiento aproximado por cada metro según el ancho.
+  private async handleMarquillas(jid: string, option: string) {
+    const opt = option.toUpperCase();
 
-*Selecciona el ancho para tu pedido de 300m:*
+    if (opt === '1') {
+      const msgDatos = `✅ *¡Excelente!* Para darte el presupuesto exacto de tus marquillas o manillas, por favor envíanos los siguientes datos en un solo mensaje:
 
-A) *1.2 cm:* ~24,900 unidades.
-B) *1.5 cm:* ~19,800 unidades.
-C) *2.2 cm:* ~13,500 unidades.
-D) *2.5 cm:* ~12,000 unidades.
-E) *3.2 cm:* ~9,300 unidades.
-F) *5.0 cm:* ~6,000 unidades.
-G) Otra medida / No estoy seguro.
+  1. Medidas (Ancho x Largo).
+  2. Cantidad (Mínimo sugerido).
+  3. Imagen de tu logo o diseño. 📍
 
-*Escribe la letra de tu opción:*`;
-    await this.whatsappService.sendMessage(jid, message);
-  }
+  Realizamos envíos confiables a toda Colombia. ¡Quedamos atentos para procesar tu solicitud!
+  
+  👌 Con esta información puedo pasarte con un asesor para enviarte precios y tiempos de producción.`;
+      
+      await this.whatsappService.sendMessage(jid, msgDatos);
+      
+      await this.statusRepo.update({ user_number: jid }, { estatus: 0, menu: 3 });
 
-  private async handleMenu2(jid: string, option: string) {
-    const validOptions = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
-    
-    if (validOptions.includes(option)) {
-      await this.statusRepo.update({ user_number: jid }, { menu: 3 });
-      const nextMsg = `¡Perfecto! Ahora hablemos del diseño y acabado. 🎨
+    } else if (opt === '2') {
+      const msgDespedida = `¡Gracias por tu interés! 🙌
+      
+  En este momento nuestro proceso de producción está optimizado para pedidos desde 300 metros en adelante.
 
-Por favor, envíanos en un solo mensaje:
-1️⃣ ¿Cómo prefieres la entrega? (Rollo, Cortadas o Doblez).
-2️⃣ ¿Qué tipo de suavidad buscas? (Premium o Estándar).
-3️⃣ ¿Cuántos colores tiene tu logo?
+  Si en el futuro tu marca requiere esa cantidad, estaremos felices de ayudarte 💛`;
+      
+      await this.whatsappService.sendMessage(jid, msgDespedida);
+      
+      await this.statusRepo.delete({ user_number: jid });
 
-*Y lo más importante: ¡Adjunta la imagen de tu logo aquí abajo!* 👇`;
-      await this.whatsappService.sendMessage(jid, nextMsg);
     } else {
-      await this.whatsappService.sendMessage(jid, "⚠️ Por favor, selecciona una letra válida (A, B, C, D, E, F o G).");
+      await this.whatsappService.sendMessage(jid, "⚠️ Por favor, selecciona *1* o *2*.");
     }
   }
 
-  private async handleMenu3(jid: string, body: string) {
-    // Aquí se apaga el bot para que el asesor entre a revisar los detalles
-    await this.whatsappService.sendMessage(jid, `¡Información recibida! 📩 Un asesor de *Marca-tex* revisará tu logo y los detalles técnicos.
 
-En breve te contactaremos para finalizar tu presupuesto. 🧵✨`);
+  private async handleEtiquetasCarton(jid: string, option: string) {
+    const opt = option.toUpperCase();
 
-    await this.statusRepo.update({ user_number: jid }, { estatus: 0, menu: 4 });
+    if (opt === '1') {
+      // CASO SÍ: Pedir detalles técnicos
+      const msgDatos = `Perfecto 🙌 ¡Podemos trabajar juntos!
+
+  Para enviarte una cotización personalizada, cuéntame por favor en un solo mensaje:
+
+  1️⃣ ¿Qué tamaño aproximado tendrá la etiqueta?
+  2️⃣ ¿Qué tipo de acabado buscas? (Mate, brillante, laminado, relieve, foil dorado/plata, perforación, etc.)
+  3️⃣ ¿Ya tienes el diseño listo en formato editable (PDF, AI, JPG)?
+  4️⃣ ¿La desea con cordón?
+
+  Con esta información te envío precios y tiempos de producción 😊`;
+      
+      await this.whatsappService.sendMessage(jid, msgDatos);
+      
+      // Deshabilitamos el bot para que el asesor reciba la data
+      await this.statusRepo.update({ user_number: jid }, { estatus: 0 });
+
+    } else if (opt === '2') {
+      // CASO NO: Despedida y reseteo
+      const msgDespedida = `Gracias por tu interés 🙌
+
+  Actualmente nuestra producción está enfocada en marcas que requieren 3.000 unidades en adelante, lo que nos permite garantizar calidad y precios competitivos.
+
+  Si en el futuro tu marca requiere esa cantidad, estaremos felices de apoyarte 💛`;
+      
+      await this.whatsappService.sendMessage(jid, msgDespedida);
+      
+      // Eliminamos el registro para que pueda reingresar como usuario nuevo
+      await this.statusRepo.delete({ user_number: jid });
+
+    } else {
+      await this.whatsappService.sendMessage(jid, "⚠️ Por favor, selecciona *1* o *2*.");
+    }
+  }
+
+
+  private async handleGarras(jid: string, option: string) {
+    const opt = option.toUpperCase();
+
+    if (opt === '1') {
+      // CASO SÍ: Recolección de detalles
+      const msgDatos = `¡Perfecto! Vamos a proyectar tu marca. 🚀 Por favor, ayúdame con estos detalles en un solo mensaje para tu cotización:
+
+  1️⃣ *Color del material:* (¿Café, negro, miel o un color especial?)
+  2️⃣ *Tipo de grabado:* (¿Repujado/Relieve, grabado láser o estampado?)
+  3️⃣ *Forma y medida:* (Ejemplo: Cuadrada de 4x4cm o rectangular de 6x2cm).
+
+  *Envíanos tu logo o una referencia visual* y un asesor humano validará la viabilidad técnica de inmediato. 😊`;
+      
+      await this.whatsappService.sendMessage(jid, msgDatos);
+      
+      // Deshabilitamos el bot para la intervención del asesor
+      await this.statusRepo.update({ user_number: jid }, { estatus: 0 });
+
+    } else if (opt === '2') {
+      // CASO NO: Respuesta cuidando la marca y reseteo
+      const msgDespedida = `"Entiendo. Por el alto costo de montaje de moldes y maquinaria para sintéticos, nuestra producción mínima es de 3.000 piezas.
+
+  Si en el futuro tu volumen de producción aumenta, ¡en *Marca-Tex* estaremos listos para fabricar las mejores garras para tu marca! 🚀"`;
+      
+      await this.whatsappService.sendMessage(jid, msgDespedida);
+      
+      // Eliminamos de la tabla de status para que pueda volver a cotizar otro producto luego
+      await this.statusRepo.delete({ user_number: jid });
+
+    } else {
+      await this.whatsappService.sendMessage(jid, "⚠️ Por favor, selecciona *1* o *2*.");
+    }
   }
 }
