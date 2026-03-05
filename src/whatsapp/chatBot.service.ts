@@ -159,7 +159,10 @@ responde con las opciones numericas segun corresponda.`;
   C) Bordados Personalizados.
   D) Apliques Importados (Tendencia).
   
-  responde con las opciones en letra segun corresponda.`;
+  responde con las opciones en letra segun corresponda.
+  
+  puedo pasarte con un asesor para enviarte precios y tiempos de producción.`;
+  
         await this.whatsappService.sendMessage(jid, msgApliques);
 
         await this.statusRepo.update({ user_number: jid }, { estatus: 0 });
@@ -180,8 +183,20 @@ responde con las opciones numericas segun corresponda.`;
   1. Medidas (Ancho x Largo).
   2. Cantidad (Mínimo sugerido).
   3. Imagen de tu logo o diseño. 📍
+  
+  Ancho de Marquilla,Unidades por Metro (aprox.)
+      1.2 cm,80 - 83 unidades
+      1.5 cm,63 - 66 unidades
+      2.2 cm,43 - 45 unidades
+      2.5 cm,38 - 40 unidades
+      2.8 cm,34 - 35 unidades
+      3.2 cm,30 - 31 unidades
+      4.0 cm,24 - 25 unidades
+      5.0 cm,19 - 20 unidades
+      6.8 cm,14 - 15 unidades
 
   Realizamos envíos confiables a toda Colombia. ¡Quedamos atentos para procesar tu solicitud!
+
   
   👌 Con esta información puedo pasarte con un asesor para enviarte precios y tiempos de producción.`;
       

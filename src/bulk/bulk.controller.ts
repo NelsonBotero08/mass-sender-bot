@@ -1,4 +1,4 @@
-import { Controller, Post, UseInterceptors, UploadedFile, Body, BadRequestException, UseGuards, SetMetadata, Get, Param, Delete } from '@nestjs/common';
+import { Controller, Post, UseInterceptors, UploadedFile, Body, BadRequestException, UseGuards, SetMetadata, Get, Param, Delete, Query } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { parse } from 'csv-parse/sync';
@@ -118,22 +118,16 @@ async uploadCsv(
   }
 
   @Get('report')
-  async getMassiveReport() {
-    // Usamos getRawOne porque COUNT FILTER es SQL puro
-    const data = await this.messageRepo.createQueryBuilder('msg')
-      .select('COUNT(*)', 'total')
-      // ack 3 = Entregado (Doble check gris)
-      // ack 4 = Leído (Doble check azul)
-      .addSelect('COUNT(*) FILTER (WHERE ack >= 3)', 'delivered') 
-      .addSelect('COUNT(*) FILTER (WHERE ack = 4)', 'read')
-      .getRawOne();
-
-    return {
-      enviados: parseInt(data.total),
-      entregados: parseInt(data.delivered),
-      leidos: parseInt(data.read),
-      pendientes: parseInt(data.total) - parseInt(data.delivered)
-    };
+  async getMassiveReport(
+    @Query('page') page: number = 1,
+    @Query('limit') limit: number = 20,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('phone') phone?: string // Nuevo parámetro de búsqueda
+  ) {
+    const p = Math.max(1, page);
+    const l = Math.min(100, Math.max(1, limit));
+    return await this.whatsappService.getDetailedReport(p, l, from, to, phone);
   }
 
 

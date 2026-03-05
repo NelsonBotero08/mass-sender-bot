@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -32,8 +32,38 @@ export class AuthService {
     const user = this.userRepo.create({
       email,
       password: hashedPassword,
-      role: 'ADMIN' as any
+      role: 'USER' as any
     });
     return await this.userRepo.save(user);
+  }
+
+  async findAllUsers() {
+    return await this.userRepo.find({
+      select: ['id', 'email', 'role'], // No devolvemos la contraseña
+      order: { id: 'ASC' }
+    });
+  }
+
+  // Cambiar el rol
+  async changeUserRole(adminId: number, userId: number, newRole: string) {
+    // 1. Evitar que se modifique a sí mismo
+    if (adminId === Number(userId)) {
+      throw new BadRequestException('No puedes cambiar tu propio rol. Solicita a otro administrador que lo haga.');
+    }
+
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    
+    if (!user) {
+      throw new NotFoundException(`El usuario con ID ${userId} no existe`);
+    }
+
+    // 2. Aplicar el cambio
+    user.role = newRole as any;
+    await this.userRepo.save(user);
+
+    return { 
+      success: true, 
+      message: `El usuario ${user.email} ahora tiene el rol: ${newRole}` 
+    };
   }
 }

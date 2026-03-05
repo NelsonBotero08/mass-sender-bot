@@ -1,10 +1,10 @@
 import { Injectable, OnModuleInit, Logger, forwardRef, Inject } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import makeWASocket, { 
-  DisconnectReason, 
-  useMultiFileAuthState, 
+import { MoreThanOrEqual, Repository } from 'typeorm';
+import makeWASocket, {
+  DisconnectReason,
+  useMultiFileAuthState,
   fetchLatestBaileysVersion,
   delay,
   WASocket,
@@ -15,10 +15,11 @@ import { Message } from './entities/message.entity';
 import { Conversation } from './entities/conversation.entity';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Template } from './entities/template.entity';
 import { BotStatus } from './entities/botStatus.entity';
 import { ChatbotService } from './chatBot.service';
 import * as qrcodeTerminal from 'qrcode-terminal';
+
+
 
 @Injectable()
 export class WhatsappService implements OnModuleInit {
@@ -28,21 +29,18 @@ export class WhatsappService implements OnModuleInit {
   private reconnectAttempts = 0;
   private readonly authPath = path.join(process.cwd(), 'auth_info_baileys');
   public socket: WASocket | null = null;
-
   private botEnabled = true;
-
 
   constructor(
     @InjectRepository(Message) private messageRepo: Repository<Message>,
     @InjectRepository(Conversation) private convRepo: Repository<Conversation>,
     @InjectRepository(BotStatus) private statusRepo: Repository<BotStatus>,
-
     @Inject(forwardRef(() => ChatbotService)) // 2. Inyecta con forwardRef
     private readonly chatbotService: ChatbotService,
   ) {}
 
   // AUTO-ARRANQUE: Si hay sesión, conecta solo al prender el servidor
- async onModuleInit() {
+  async onModuleInit() {
     const credsPath = path.join(this.authPath, 'creds.json');
     if (fs.existsSync(credsPath)) {
       this.logger.log('📦 Sesión previa detectada. Conectando automáticamente...');
@@ -58,191 +56,242 @@ export class WhatsappService implements OnModuleInit {
     return { message: 'Iniciando conexión...' };
   }
 
+
   async connectToWhatsApp() {
     await this.destroySocket();
     this.connectionStatus = 'CONNECTING';
-
     const { state, saveCreds } = await useMultiFileAuthState(this.authPath);
     const { version } = await fetchLatestBaileysVersion();
-
     this.socket = makeWASocket({
       version,
-      printQRInTerminal: false, // Lo manejaremos manualmente para controlarlo mejor
+      printQRInTerminal: false, 
       auth: state,
       logger: require('pino')({ level: 'silent' }),
       browser: ['Chrome', 'MacOS', '10.15.7'],
-      // CONFIGURACIÓN ANTI-DETECCIÓN
       syncFullHistory: false,
       markOnlineOnConnect: false,
       shouldIgnoreJid: (jid) => jid.includes('@broadcast'),
-      
-      // En lugar de getNextRetryingIn, usamos configuraciones estándar de conexión
       connectTimeoutMs: 60000,
       defaultQueryTimeoutMs: 0,
     });
 
     this.socket.ev.on('creds.update', saveCreds);
-
     this.socket.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
-
       if (qr) {
         this.lastQr = qr;
-        this.logger.log('📲 Nuevo QR generado. Escanéalo en la terminal o el dashboard:');
-        // Imprime el QR en la terminal del servidor
+        this.logger.log('📲 Nuevo QR generado.');
         qrcodeTerminal.generate(qr, { small: true });
       }
-
       if (connection === 'open') {
         this.connectionStatus = 'CONNECTED';
         this.lastQr = null;
+        this.reconnectAttempts = 0; 
         this.logger.log('✅ WhatsApp conectado exitosamente.');
       }
-
       if (connection === 'close') {
         this.connectionStatus = 'DISCONNECTED';
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
+        this.logger.warn(`🔌 Conexión cerrada. Código: ${statusCode}`);
         if (statusCode === DisconnectReason.loggedOut) {
+          this.logger.warn('🚪 Logout real. Reseteando auth...');
           await this.resetAuth();
+        } else if (statusCode === 515 || statusCode === 401) {
+          this.logger.warn(`⚠️ Error ${statusCode} - Reconectando sin borrar sesión...`);
+          this.reconnectAttempts++;
+          const waitTime = Math.min(5000 * this.reconnectAttempts, 30000);
+          setTimeout(() => this.connectToWhatsApp(), waitTime);
         } else {
           this.reconnectAttempts++;
-          setTimeout(() => this.connectToWhatsApp(), 5000);
+          if (this.reconnectAttempts > 10) {
+            this.logger.error('🔴 Demasiados intentos de reconexión. Deteniendo.');
+            this.connectionStatus = 'DISCONNECTED';
+            return;
+          }
+          const waitTime = Math.min(5000 * this.reconnectAttempts, 30000);
+          setTimeout(() => this.connectToWhatsApp(), waitTime);
         }
       }
     });
-
     this.listenToMessages();
   }
 
   private listenToMessages() {
     if (!this.socket) return;
-
     this.socket.ev.on('messages.upsert', async (m) => {
       const msg = m.messages[0];
       if (!msg.message || !msg.key.remoteJid) return;
-
-      
-
       const remoteJid = msg.key.remoteJid;
-      const cleanId = this.getCleanId(remoteJid); // ID "limpio" (puede ser el número o el LID)
+      const cleanId = this.getCleanId(remoteJid);
       const messageId = msg.key.id || '';
-
-      // 1. DETECTAR SI EL MENSAJE PROVIENE DE "MI" (fromMe)
       if (msg.key.fromMe) {
-        const messageId = msg.key.id || '';
-        // Detectamos si es un mensaje de sistema
-        const isSentByMyCode = messageId.startsWith('BAE5') || messageId.startsWith('3EB0') || messageId.startsWith('3A');
 
+        const messageId = msg.key.id || '';
+        const isSentByMyCode = messageId.startsWith('BAE5') || messageId.startsWith('3EB0') || messageId.startsWith('3A');
         if (isSentByMyCode) {
-          // 🚀 IMPORTANTE: Si es masivo o respuesta del bot, salimos SIN guardar nada en statusRepo
           this.logger.debug(`🤖 Mensaje de sistema ignorado para DB de estados: ${messageId}`);
-          return; 
+          return;
         }
 
-        // Si llegamos aquí, es porque tú escribiste manualmente desde el celular
         this.logger.log(`🕵️‍♂️ Intervención manual detectada. Desactivando bot para ${cleanId}`);
         await this.statusRepo.upsert(
           { user_number: cleanId, estatus: 0, updated_at: new Date() },
           ['user_number']
         );
-        return; 
+        return;
       }
 
-      // 2. FILTROS DE SEGURIDAD (Grupos y estados)
       if (remoteJid.includes('@g.us') || remoteJid === 'status@broadcast') return;
-
-      // 3. VALIDAR SI EL BOT ESTÁ SILENCIADO EN DB
+      
       const botStatus = await this.statusRepo.findOne({ where: { user_number: cleanId } });
+      
       if (botStatus && botStatus.estatus === 0) {
         this.logger.log(`🚫 Bot silenciado para ${cleanId}.`);
         return;
       }
-
-      // 4. PROCESAR MENSAJE DEL CLIENTE
-      const body = (msg.message.conversation || 
-                    msg.message.extendedTextMessage?.text || 
-                    "").trim();
-
+      const body = (msg.message.conversation || msg.message.extendedTextMessage?.text ||"").trim();
       if (!body) return;
-
       this.logger.log(`📩 Cliente ${cleanId} dice: ${body}`);
       await this.chatbotService.handleBotLogic(remoteJid, body);
     });
   }
 
-  async sendMessage(phone: string, text: string) {
+
+  async sendMessage(phone: string, text: string, imagePath?: string) {
     if (!this.socket) return;
+
     try {
       const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
-      
-      // Simulación humana
-      await delay(1500);
-      await this.socket.sendPresenceUpdate('composing', jid);
-      
-      const typingTime = Math.min(text.length * 50, 5000);
-      await delay(typingTime);
 
-      const sentMsg = await this.socket.sendMessage(jid, { text });
-      await this.socket.sendPresenceUpdate('paused', jid);
-      return sentMsg;
+      await delay(2000);
+
+      if (imagePath) {
+        await this.socket.sendPresenceUpdate('composing', jid);
+        
+        await delay(4000); 
+
+        const sentMsg = await this.socket.sendMessage(jid, {
+          image: { url: imagePath }, 
+          caption: text 
+        });
+
+        await this.socket.sendPresenceUpdate('paused', jid);
+        return sentMsg;
+      } else {
+        await this.socket.sendPresenceUpdate('composing', jid);
+        const typingTime = Math.min(text.length * 50, 5000);
+        await delay(typingTime);
+
+        const sentMsg = await this.socket.sendMessage(jid, { text });
+        await this.socket.sendPresenceUpdate('paused', jid);
+        return sentMsg;
+      }
     } catch (error) {
       this.logger.error(`Error enviando mensaje: ${error.message}`);
     }
   }
 
-  async sendMassMessages(contacts: any[], customTemplates: string[]) {
-    if (!this.socket) return;
+  async sendMassMessages(contacts: any[], customTemplates: string[], imagePaths: string[] = []) {
+    try {
+      if (!this.socket) return;
+      this.logger.log(`🚀 Iniciando envío masivo a ${contacts.length} contactos.`);
 
-    this.logger.log(`🚀 Iniciando envío masivo a ${contacts.length} contactos con rotación secuencial.`);
+      // Fecha de hoy (00:00:00) para evitar duplicados en el mismo día
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
 
-    for (let i = 0; i < contacts.length; i++) {
+      
+
+      for (let i = 0; i < contacts.length; i++) {
         const contact = contacts[i];
+        
         const jid = `${contact.telefono}@s.whatsapp.net`;
 
-        // 🔄 LOGICA DE ROTACIÓN SECUENCIAL:
-        // El operador % (módulo) asegura que si i=0 usa la plantilla 0, i=1 la 1, etc.
-        // Cuando i llega al total de plantillas, vuelve a empezar desde 0.
-        const templateIndex = i % customTemplates.length;
-        const rawContent = customTemplates[templateIndex];
-        
-        const messageText = this.parseTemplate(rawContent, contact);
+        // --- 🛡️ LÓGICA DE VERIFICACIÓN ANTIDUPLICADO ---
+        const alreadySent = await this.messageRepo.findOne({
+          where: {
+            phone: contact.telefono,
+            type: 'OUTGOING',
+            status: 'SENT',
+            sentAt: MoreThanOrEqual(today) // Verificamos si hay mensajes desde las 00:00 de hoy
+          },
+          order: { sentAt: 'DESC' }
+        });
 
-        this.logger.log(`📝 Contacto ${i + 1}/${contacts.length} - Usando plantilla #${templateIndex + 1}`);
+        if (alreadySent) {
+          this.logger.log(`⏭️ ${contact.telefono} ya recibió mensaje hoy (${alreadySent.sentAt.toLocaleTimeString()}), saltando...`);
+          continue;
+        }
+        // -----------------------------------------------
+
+        // Rotación secuencial de Plantilla e Imagen
+        const templateIndex = i % customTemplates.length;
+        const messageText = this.parseTemplate(customTemplates[templateIndex], contact);
+        const rawImagePath = imagePaths.length > 0 ? imagePaths[i % imagePaths.length] : undefined;
+
+        // 2. Definimos una variable para el path final
+        let finalImagePath: string | undefined = undefined;
+
+        // 3. Solo procesamos el path si realmente existe una imagen
+        if (rawImagePath) {
+          finalImagePath = path.isAbsolute(rawImagePath) 
+            ? rawImagePath 
+            : path.resolve(rawImagePath);
+        }
+
+        this.logger.log(`📝 Procesando ${i + 1}/${contacts.length} para ${contact.telefono}...`);
 
         try {
-            const sentMsg = await this.sendMessage(jid, messageText);
+          // Llamamos a sendMessage que ya tiene la simulación humana (composing + delay)
+          
+          const sentMsg = await this.sendMessage(jid, messageText, finalImagePath);
 
-            if (sentMsg) {
-                await this.messageRepo.save({
-                    phone: contact.telefono,
-                    content: messageText,
-                    status: 'SENT',
-                    timestamp: new Date(),
-                    type: 'OUTGOING'
-                });
-            }
+          if (sentMsg) {
+            await this.messageRepo.save({
+              phone: contact.telefono,
+              content: messageText + (finalImagePath ? ' [CON IMAGEN]' : ''),
+              status: 'SENT',
+              sentAt: new Date(),
+              type: 'OUTGOING'
+            });
+            this.logger.log(`✅ Mensaje enviado exitosamente a ${contact.telefono}`);
+          }
 
-            // Intervalo anti-bloqueo
-            if (i < contacts.length - 1) {
-                const waitTime = Math.floor(Math.random() * (95000 - 45000 + 1)) + 45000;
-                this.logger.log(`⏳ Esperando ${waitTime / 1000}s...`);
-                await delay(waitTime);
-            }
+          // Intervalo anti-bloqueo (solo si no es el último de la lista)
+          if (i < contacts.length - 1) {
+            const waitTime = Math.floor(Math.random() * (95000 - 45000 + 1)) + 45000;
+            this.logger.log(`⏳ Esperando ${waitTime / 1000}s para evitar detección...`);
+            await delay(waitTime);
+          }
+
         } catch (e) {
-            this.logger.error(`❌ Error en ${contact.telefono}: ${e.message}`);
+          this.logger.error(`❌ Error en ${contact.telefono}: ${e.message}`);
+          
+          // Guardar registro de fallo para que el asesor sepa que no se envió
+          await this.messageRepo.save({
+            phone: contact.telefono,
+            content: messageText,
+            status: 'FAILED',
+            sentAt: new Date(),
+            type: 'OUTGOING'
+          }).catch(() => {});
         }
+      }
+      this.logger.log('🏁 Proceso masivo finalizado.');
+    } catch (error) {
+      this.logger.error(`❌ Error crítico en envío masivo: ${error.message}`);
     }
   }
 
-// Función auxiliar para procesar múltiples variables
-private parseTemplate(content: string, variables: any): string {
-  // Esta regex busca cualquier texto dentro de {{ }}
-  return content.replace(/{{(\w+)}}/g, (match, key) => {
-    // Si la variable existe en el contacto (ej. variables['nombre']), la pone. 
-    // Si no, deja el marcador o un espacio en blanco.
-    return variables[key] !== undefined ? variables[key] : match;
-  });
-}
+  // Función auxiliar para procesar múltiples variables
+  private parseTemplate(content: string, variables: any): string {
+    return content.replace(/{{(\w+)}}/g, (match, key) => {
+      const value = variables[key];
+      
+      return (value !== null && value !== undefined) ? String(value) : ''; 
+    });
+  }
+
 
   async resetAuth() {
     await this.destroySocket();
@@ -254,6 +303,7 @@ private parseTemplate(content: string, variables: any): string {
     this.logger.warn('Sesión reseteada completamente.');
   }
 
+
   async logout() {
     if (this.socket) {
       try { await this.socket.logout(); } catch (e) {}
@@ -261,6 +311,7 @@ private parseTemplate(content: string, variables: any): string {
     await this.resetAuth();
     return { success: true };
   }
+
 
   private async destroySocket() {
     if (this.socket) {
@@ -277,20 +328,20 @@ private parseTemplate(content: string, variables: any): string {
     return { status: this.connectionStatus, qr: this.lastQr };
   }
 
+
+
   extractVariables(content: string): string[] {
     const matches = content.match(/{{(\w+)}}/g);
     if (!matches) return [];
     return [...new Set(matches.map(m => m.replace(/[{}]/g, '')))];
   }
 
-@Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async handleDailyReset() {
     this.logger.log('🧹 Ejecutando limpieza total de BotStatus (Truncate)...');
-    
     try {
-      // .clear() es el equivalente a un TRUNCATE en SQL
       await this.statusRepo.clear();
-      
       this.logger.log('✅ Tabla BotStatus vaciada exitosamente.');
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Error desconocido';
@@ -298,15 +349,123 @@ private parseTemplate(content: string, variables: any): string {
     }
   }
 
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async handleClearUploads() {
+    this.logger.log('🧹 Iniciando limpieza diaria de carpeta de imágenes...');
+    const directory = path.resolve(process.cwd(), 'uploads');
+
+    try {
+      if (fs.existsSync(directory)) {
+        const files = fs.readdirSync(directory);
+        for (const file of files) {
+          // Evitamos borrar archivos ocultos como .gitignore si existieran
+          if (file !== '.gitignore') {
+            fs.unlinkSync(path.join(directory, file));
+          }
+        }
+        this.logger.log(`✅ Carpeta de imágenes limpia: ${files.length} archivos eliminados.`);
+      }
+    } catch (error) {
+      this.logger.error(`❌ Error limpiando carpeta uploads: ${error.message}`);
+    }
+  }
+
+
   private getCleanId(remoteJid: string): string {
-    // 1. Quitamos el dominio (@s.whatsapp.net, @lid, etc)
     let id = remoteJid.split('@')[0];
-    
-    // 2. Si viene con el sufijo de dispositivo (ej: 57300123:1), quitamos lo que sigue al ':'
+
     if (id.includes(':')) {
       id = id.split(':')[0];
     }
-    
     return id;
+  }
+
+
+  async clearAuthFolder(): Promise<{ success: boolean; message: string }> {
+    try {
+      await this.destroySocket();
+      
+      if (fs.existsSync(this.authPath)) {
+        fs.rmSync(this.authPath, { recursive: true, force: true });
+        this.logger.warn('🗑️ Carpeta auth eliminada manualmente desde el front.');
+      }
+      
+      this.connectionStatus = 'IDLE';
+      this.lastQr = null;
+      this.reconnectAttempts = 0;
+      
+      return { success: true, message: 'Sesión eliminada. Ya puedes escanear un QR nuevo.' };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Error desconocido';
+      this.logger.error(`❌ Error al limpiar auth: ${msg}`);
+      return { success: false, message: msg };
+    }
+  }
+
+  async getDetailedReport(page: number, limit: number, fromDate?: string, toDate?: string, phone?: string) {
+    const query = this.messageRepo.createQueryBuilder('msg')
+      .where('msg.type = :type', { type: 'OUTGOING' });
+
+    // 1. Filtro por Teléfono (si se proporciona)
+    if (phone) {
+      // Usamos LIKE por si el número viene con prefijo o quieres búsqueda parcial
+      query.andWhere('msg.phone LIKE :phone', { phone: `%${phone}%` });
+    }
+
+    // 2. Filtro por Fechas
+    if (fromDate && toDate) {
+      // 1. Forzamos el inicio a las 00:00:00.000
+      const start = new Date(fromDate);
+      start.setUTCHours(0, 0, 0, 0); 
+
+      // 2. Forzamos el fin a las 23:59:59.999
+      const end = new Date(toDate);
+      end.setUTCHours(23, 59, 59, 999);
+
+      query.andWhere('msg.sentAt BETWEEN :start AND :end', { start, end });
+    }
+
+    // 3. Obtener Resumen General con los filtros aplicados
+    const stats = await query
+      .clone()
+      .select('COUNT(*)', 'total')
+      .addSelect('COUNT(*) FILTER (WHERE status = :sent)', 'sentCount')
+      .addSelect('COUNT(*) FILTER (WHERE status = :failed)', 'failedCount')
+      .setParameters({ sent: 'SENT', failed: 'FAILED' })
+      .getRawOne();
+
+    const totalCount = parseInt(stats.total) || 0;
+
+    // 4. Obtener Lista Detallada con Paginación
+    const details = await query
+      .select(['msg.sentAt', 'msg.phone', 'msg.content', 'msg.status'])
+      .orderBy('msg.sentAt', 'DESC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getMany();
+
+    return {
+      filtros_aplicados: {
+        busqueda_telefono: phone || 'Ninguna',
+        rango_fechas: fromDate ? `${fromDate} a ${toDate}` : 'Todo el historial'
+      },
+      resumen: {
+        total_encontrados: totalCount,
+        exitosos: parseInt(stats.sentCount) || 0,
+        fallidos: parseInt(stats.failedCount) || 0,
+      },
+      paginacion: {
+        total_items: totalCount,
+        total_paginas: Math.ceil(totalCount / limit),
+        pagina_actual: page,
+        items_por_pagina: limit
+      },
+      detalle: details.map(m => ({
+        fecha: m.sentAt.toLocaleString(), 
+        telefono: m.phone,
+        mensaje: m.content,
+        estado: m.status === 'SENT' ? '✅ Enviado' : '❌ Fallido'
+      }))
+    };
   }
 }

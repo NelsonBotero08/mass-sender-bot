@@ -3,12 +3,15 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, MoreThanOrEqual, MoreThan } from 'typeorm';
 import { Template } from '../whatsapp/entities/template.entity';
 import { Message } from 'src/whatsapp/entities/message.entity';
+import { Contact } from 'src/whatsapp/entities/contact.entity';
 
 @Injectable()
 export class BulkService {
   constructor(
     @InjectRepository(Template)
     private readonly templateRepo: Repository<Template>,
+    @InjectRepository(Contact)
+    private readonly contactRepo: Repository<Contact>,
     @InjectRepository(Message) private readonly messageRepo: Repository<Message>,
   ) {}
 
@@ -19,7 +22,7 @@ export class BulkService {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    // 1. Mensajes de hoy (usando sentAt que es el nombre real en tu DB)
+    // 1. Mensajes enviados hoy
     const sentToday = await this.messageRepo.count({
       where: { 
         sentAt: MoreThanOrEqual(today) 
@@ -29,44 +32,32 @@ export class BulkService {
     // 2. Conteo de plantillas
     const templateCount = await this.templateRepo.count();
 
-    // 3. Gráfico de los últimos 7 días
+    // 3. Conteo de contactos REALES (Base de datos total registrada)
+    // Aquí usamos directamente el repositorio de Contactos
+    const totalContacts = await this.contactRepo.count();
+
+    // 4. Gráfico de los últimos 7 días
+    // Mantenemos la lógica de agregación por fecha
     const rawChartData = await this.messageRepo
       .createQueryBuilder('message')
       .select("TO_CHAR(message.sentAt, 'DD/MM')", 'day') 
       .addSelect('COUNT(*)', 'envios')
       .where('message.sentAt >= CURRENT_DATE - INTERVAL \'7 days\'')
       .groupBy("TO_CHAR(message.sentAt, 'DD/MM')")
-      .orderBy('day', 'ASC')
+      // Importante: Ordenar por la fecha real, no por el string formateado
+      .orderBy('MIN(message.sentAt)', 'ASC') 
       .getRawMany();
-
-    // 4. Tasa de entrega real basada en tu columna 'ack'
-    const total = await this.messageRepo.count();
-    // Según tu lógica: ack > 1 es entregado (2 o 3)
-    const delivered = await this.messageRepo.count({ 
-      where: { ack: MoreThan(1) } 
-    });
-    
-    const deliveryRate = total > 0 
-      ? ((delivered / total) * 100).toFixed(2) + '%' 
-      : '0%';
-
-    // 5. Contactos únicos (Basado en la columna 'phone')
-    const activeContactsRaw = await this.messageRepo
-      .createQueryBuilder('message')
-      .select('COUNT(DISTINCT message.phone)', 'count')
-      .getRawOne();
 
     return {
       sentToday,
-      activeContacts: parseInt(activeContactsRaw.count) || 0,
-      deliveryRate,
+      totalContacts, // Cambiado: Ahora representa el total de la tabla Contact
       templateCount,
       chartData: rawChartData.map(item => ({
         day: item.day,
         envios: parseInt(item.envios)
       }))
     };
-  }
+}
 
   // Crear plantilla
   async createTemplate(name: string, content: string) {

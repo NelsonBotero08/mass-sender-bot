@@ -1,5 +1,6 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, Index } from 'typeorm';
 
+@Index(['phone', 'sentAt'])
 @Entity()
 export class Message {
   @PrimaryGeneratedColumn()
@@ -19,6 +20,9 @@ export class Message {
 
   @Column({ default: 1 }) // 1 = Pendiente/Enviado por el servidor
   ack: number;
+
+  @Column({ default: 'OUTGOING' }) // ← campo nuevo
+  type: string;
 
   @Column({ nullable: true })
   whatsappId: string;

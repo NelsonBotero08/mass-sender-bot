@@ -6,13 +6,15 @@ import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { Message } from '../whatsapp/entities/message.entity';
 import { Template } from '../whatsapp/entities/template.entity'; 
 import { BulkService } from './bulk.service';
+import { Contact } from 'src/whatsapp/entities/contact.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Message, Template]), 
+    TypeOrmModule.forFeature([Message, Template, Contact]), 
     WhatsappModule, 
   ],
   controllers: [BulkController],
   providers: [BulkService],
+  exports: [BulkService],
 })
 export class BulkModule {}
