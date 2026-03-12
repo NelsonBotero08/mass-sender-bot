@@ -10,13 +10,15 @@ import { ScheduleModule } from '@nestjs/schedule';
     ScheduleModule.forRoot(),
     TypeOrmModule.forRoot({
       type: 'postgres',
-      host: 'localhost',
-      port: 5432,
-      username: 'user_admin',
-      password: 'my_password123',
-      database: 'mass_sender_db',
+      // Usamos la URL de la variable de entorno que pusimos en Render
+      url: process.env.DATABASE_URL, 
       autoLoadEntities: true, 
+      // Synchronize en true es útil para desarrollo, pero ten cuidado en producción
       synchronize: true, 
+      // IMPORTANTE: Neon requiere SSL para conectar desde afuera
+      ssl: {
+        rejectUnauthorized: false,
+      },
     }),
     WhatsappModule,
     BulkModule,
