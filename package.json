@@ -28,6 +28,7 @@
     "@nestjs/schedule": "^6.1.1",
     "@nestjs/typeorm": "^11.0.0",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "axios": "^1.13.6",
     "bcrypt": "^6.0.0",
     "csv-parse": "^6.1.0",
     "passport": "^0.7.0",

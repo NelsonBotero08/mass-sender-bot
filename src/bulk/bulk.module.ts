@@ -7,13 +7,14 @@ import { Message } from '../whatsapp/entities/message.entity';
 import { Template } from '../whatsapp/entities/template.entity'; 
 import { BulkService } from './bulk.service';
 import { Contact } from 'src/whatsapp/entities/contact.entity';
+import { HealthController } from './health.controller';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Message, Template, Contact]), 
     WhatsappModule, 
   ],
-  controllers: [BulkController],
+  controllers: [BulkController, HealthController],
   providers: [BulkService],
   exports: [BulkService],
 })
