@@ -8,6 +8,7 @@ import { Template } from '../whatsapp/entities/template.entity';
 import { BulkService } from './bulk.service';
 import { Contact } from 'src/whatsapp/entities/contact.entity';
 import { HealthController } from './health.controller';
+import { MaintenanceService } from './maintenance.service';
 
 @Module({
   imports: [
@@ -15,7 +16,7 @@ import { HealthController } from './health.controller';
     WhatsappModule, 
   ],
   controllers: [BulkController, HealthController],
-  providers: [BulkService],
+  providers: [BulkService, MaintenanceService],
   exports: [BulkService],
 })
 export class BulkModule {}
