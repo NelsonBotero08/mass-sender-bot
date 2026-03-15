@@ -17,36 +17,108 @@ export class ContactService {
     private readonly contactRepo: Repository<Contact>,
   ) {}
 
-  async findPaginated(query: string = '', page: number = 1, limit: number = 20, categoria?: string) {
-    const skip = (page - 1) * limit;
+  // async findPaginated(query: string = '', page: number = 1, limit: number = 20, categoria?: string) {
+  //   const skip = (page - 1) * limit;
 
-    // Construimos las condiciones de búsqueda
-    const whereCondition: any = { active: true };
+  //   // Construimos las condiciones de búsqueda
+  //   const whereCondition: any = { active: true };
     
-    if (categoria) {
-      whereCondition.categoria = categoria;
+  //   if (categoria) {
+  //     whereCondition.categoria = categoria;
+  //   }
+
+  //   // Si hay un término de búsqueda, buscamos en nombre o teléfono
+  //   const [data, total] = await this.contactRepo.findAndCount({
+  //     where: query ? [
+  //       { ...whereCondition, nombre: Like(`%${query}%`) },
+  //       { ...whereCondition, telefono: Like(`%${query}%`) }
+  //     ] : whereCondition,
+  //     order: { nombre: 'ASC' },
+  //     take: limit,
+  //     skip: skip,
+  //   });
+
+  //   return {
+  //     data,
+  //     meta: {
+  //       total,
+  //       page,
+  //       lastPage: Math.ceil(total / limit),
+  //       hasNextPage: page * limit < total,
+  //       hasPreviousPage: page > 1
+  //     }
+  //   };
+  // }
+
+ async findPaginated(
+    search?: string, 
+    page: number = 1, 
+    limit: number = 50, 
+    categoria?: string,
+    excludeDays: number = 0
+  ) {
+    const query = this.contactRepo.createQueryBuilder('contact');
+
+    // 1. Obtenemos la última fecha de envío como un campo virtual
+    // Usamos comillas dobles en "sentAt" y "phone" para asegurar compatibilidad
+    query.addSelect((subQuery) => {
+      return subQuery
+        .select('MAX("sentAt")', 'lastSent')
+        .from('message', 'msg')
+        .where('msg.phone = contact.telefono');
+    }, 'contact_lastSent');
+
+    // Filtro base
+    query.where('contact.active = :active', { active: true });
+
+    // 2. FILTRO DE EXCLUSIÓN (La lógica que necesitabas)
+    if (excludeDays > 0) {
+      const fechaLimite = new Date();
+      fechaLimite.setDate(fechaLimite.getDate() - excludeDays);
+
+      query.andWhere((qb) => {
+        const subQuery = qb
+          .subQuery()
+          .select('m.phone')
+          .from('message', 'm')
+          .where('m."sentAt" > :fechaLimite')
+          .getQuery();
+        return 'contact.telefono NOT IN ' + subQuery;
+      }).setParameter('fechaLimite', fechaLimite);
     }
 
-    // Si hay un término de búsqueda, buscamos en nombre o teléfono
-    const [data, total] = await this.contactRepo.findAndCount({
-      where: query ? [
-        { ...whereCondition, nombre: Like(`%${query}%`) },
-        { ...whereCondition, telefono: Like(`%${query}%`) }
-      ] : whereCondition,
-      order: { nombre: 'ASC' },
-      take: limit,
-      skip: skip,
-    });
+    // 3. Otros filtros
+    if (search) {
+      query.andWhere('(contact.nombre ILIKE :search OR contact.telefono LIKE :search)', { 
+        search: `%${search}%` 
+      });
+    }
+
+    if (categoria) {
+      query.andWhere('contact.categoria = :categoria', { categoria });
+    }
+
+    // 4. Ejecución
+    // Importante: Usamos getRawAndEntities para capturar el campo virtual 'lastSent'
+    const { entities, raw } = await query
+      .orderBy('contact.nombre', 'ASC')
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getRawAndEntities();
+
+    // Mapeamos el campo raw 'contact_lastSent' a la entidad para el frontend
+    const data = entities.map((entity, index) => ({
+      ...entity,
+      lastSent: raw[index].contact_lastSent,
+    }));
+
+    const total = await query.getCount();
 
     return {
       data,
-      meta: {
-        total,
-        page,
-        lastPage: Math.ceil(total / limit),
-        hasNextPage: page * limit < total,
-        hasPreviousPage: page > 1
-      }
+      total,
+      page,
+      lastPage: Math.ceil(total / limit),
     };
   }
 
@@ -85,54 +157,62 @@ export class ContactService {
     return await this.contactRepo.save(newContact);
     }
 
-    async importFromCsv(fileBuffer: Buffer) {
+  async importFromCsv(fileBuffer: Buffer) {
     try {
-        const records = parse(fileBuffer, {
+      const records = parse(fileBuffer, {
         columns: true,
         skip_empty_lines: true,
-        delimiter: ';',
+        delimiter: ';', 
         trim: true,
         bom: true,
-        }) as CsvContact[];
+      }) as any[];
 
-        let importedCount = 0;
+      let importedCount = 0;
 
-        for (const record of records) {
+      for (const record of records) {
+        // 1. Limpieza total de caracteres no numéricos
         let rawPhone = String(record.telefono || '').replace(/\D/g, '');
 
         if (!rawPhone) continue;
 
-        // Auto-corrección para Colombia si vienen 10 dígitos
-        if (rawPhone.length === 10) {
-            rawPhone = `57${rawPhone}`;
+        // 2. Validación de indicativo Colombia
+        if (rawPhone.length === 10 && rawPhone.startsWith('3')) {
+          rawPhone = `57${rawPhone}`;
+        } else if (rawPhone.length < 10) {
+          continue; 
         }
 
-        // Validación de longitud mínima después de limpiar
-        if (rawPhone.length < 10) continue;
+        // 3. Lógica para el nombre
+        // Si el campo nombre está vacío, tiene solo espacios o es undefined, asignamos 'Sin nombre'
+        const nombreFinal = (record.nombre && record.nombre.trim().length > 0) 
+          ? record.nombre.trim() 
+          : 'Sin nombre';
 
+        // 4. UPSERT: Esta es la clave para la actualización
+        // Si el 'telefono' ya existe, TypeORM actualizará el 'nombre' y 'categoria'
         await this.contactRepo.upsert(
-            {
+          {
             telefono: rawPhone,
-            nombre: record.nombre || 'Sin nombre',
-            categoria: record.categoria || 'General',
+            nombre: nombreFinal,
+            categoria: (record.categoria || 'General').trim(),
             active: true,
-            },
-            ['telefono'], // Esto evita duplicados usando el índice único de la DB
+          },
+          ['telefono'], // Columna que actúa como llave única para identificar al contacto
         );
         
         importedCount++;
-        }
+      }
 
-        return {
+      return {
         success: true,
         total_en_archivo: records.length,
         contactos_procesados: importedCount,
-        message: `Se sincronizaron ${importedCount} contactos exitosamente.`
-        };
+        message: `Proceso finalizado. Se sincronizaron ${importedCount} contactos.`
+      };
     } catch (error) {
-        throw new BadRequestException('Error al procesar el archivo CSV: ' + error.message);
+      throw new BadRequestException('Error al procesar el CSV: ' + error.message);
     }
-    }
+  }
 
     async update(id: number, data: { telefono?: string; nombre?: string; categoria?: string; active?: boolean }) {
   // 1. Buscamos si el contacto existe

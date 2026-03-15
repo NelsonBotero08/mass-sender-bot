@@ -146,8 +146,18 @@ export class WhatsappController {
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 20,
     @Query('categoria') categoria?: string,
+    @Query('excludeDays') excludeDays?: string, // Lo recibimos como string del Query
   ) {
-    return await this.contactService.findPaginated(search, page, limit, categoria);
+    // Lo convertimos a número y lo pasamos al service
+    const days = excludeDays ? parseInt(excludeDays) : 0;
+    
+    return await this.contactService.findPaginated(
+      search, 
+      Number(page), 
+      Number(limit), 
+      categoria,
+      days // <-- No olvides pasarlo aquí
+    );
   }
 
   // 3. Importar contactos masivamente (CSV)
