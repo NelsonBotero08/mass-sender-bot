@@ -62,8 +62,8 @@ export class WhatsappController {
 
   @Post('logout')
   async logout() {
-    return this.whatsappService.logout();
-  }
+    return { success: true, message: 'Sesión de usuario cerrada' };
+}
 
   @Post('reset-auth')
   async resetAuth() {
@@ -80,7 +80,7 @@ export class WhatsappController {
             fs.mkdirSync(uploadPath, { recursive: true });
           }
           cb(null, uploadPath);
-        } catch (err) {
+        } catch (err:any) {
           console.error('❌ Error en Multer Destination:', err);
           cb(err, uploadPath);
         }

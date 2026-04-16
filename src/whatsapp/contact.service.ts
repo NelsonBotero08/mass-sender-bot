@@ -209,7 +209,7 @@ export class ContactService {
         contactos_procesados: importedCount,
         message: `Proceso finalizado. Se sincronizaron ${importedCount} contactos.`
       };
-    } catch (error) {
+    } catch (error:any) {
       throw new BadRequestException('Error al procesar el CSV: ' + error.message);
     }
   }

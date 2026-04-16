@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BotStatus } from './entities/botStatus.entity'; 
 import { WhatsappService } from './whatsapp.service';
+import { MessageLog } from './entities/messageLog.entity';
 
 @Injectable()
 export class ChatbotService {
@@ -11,11 +12,35 @@ export class ChatbotService {
   constructor(
     @InjectRepository(BotStatus)
     private readonly statusRepo: Repository<BotStatus>,
+    @InjectRepository(MessageLog)
+    private readonly logRepo: Repository<MessageLog>,
     @Inject(forwardRef(() => WhatsappService))
     private readonly whatsappService: WhatsappService,
   ) {}
 
+  // 2. Método centralizador para enviar y registrar logs de SALIDA
+  private async sendAndLog(jid: string, message: string, isAutomated = true) {
+    // Guardar en BD
+    await this.logRepo.save({
+      user_number: jid,
+      message: message,
+      direction: 'OUT',
+      is_automated: isAutomated,
+    });
+
+    // Enviar por WhatsApp
+    return await this.sendAndLog(jid, message);
+  }
+
   async handleBotLogic(from: string, body: string) {
+
+    await this.logRepo.save({
+      user_number: from,
+      message: body,
+      direction: 'IN',
+      is_automated: false,
+    });
+
     const text = body.toLowerCase();
 
     // 1. Comando de escape para el usuario
@@ -78,7 +103,7 @@ export class ChatbotService {
   4️⃣ Placas en Zamak (Lujo metálico)
   5️⃣ Apliques (Brillos, PVC, Bordados e Importados)`;
 
-    await this.whatsappService.sendMessage(jid, message);
+    await this.sendAndLog(jid, message);
   }
 
   private async handleMenu1(jid: string, option: string) {
@@ -95,7 +120,7 @@ Si tu pedido iguala o supera esta cantidad, selecciona una opción:
 2. Busco una cantidad menor.
 
 responde con las opciones numericas segun corresponda.`;
-      await this.whatsappService.sendMessage(jid, msgMarquillas);
+      await this.sendAndLog(jid, msgMarquillas);
       break;
         
       case '2':
@@ -109,7 +134,7 @@ Para mantener nuestros estándares de calidad industrial y ofrecerte el mejor pr
 2. Busco una cantidad menor.
 
 responde con las opciones numericas segun corresponda.`;
-      await this.whatsappService.sendMessage(jid, msgCarton);
+      await this.sendAndLog(jid, msgCarton);
       break;
 
       case '3':
@@ -127,7 +152,7 @@ Para garantizar la máxima precisión en el grabado o relieve de tu diseño, nue
 
 responde con las opciones numericas segun corresponda.`;
 
-  await this.whatsappService.sendMessage(jid, msgGarras);
+  await this.sendAndLog(jid, msgGarras);
   break;
 
       case '4':
@@ -144,7 +169,7 @@ Debido al proceso de fundición y creación de moldes personalizados de alta pre
 2. Busco una cantidad menor.
 
 responde con las opciones numericas segun corresponda.`;
-      await this.whatsappService.sendMessage(jid, msgZamak);
+      await this.sendAndLog(jid, msgZamak);
       break;
 
       case '5':
@@ -163,13 +188,13 @@ responde con las opciones numericas segun corresponda.`;
   
   puedo pasarte con un asesor para enviarte precios y tiempos de producción.`;
   
-        await this.whatsappService.sendMessage(jid, msgApliques);
+        await this.sendAndLog(jid, msgApliques);
 
         await this.statusRepo.update({ user_number: jid }, { estatus: 0 });
         break;
 
       default:
-        await this.whatsappService.sendMessage(jid, "⚠️ Por favor, selecciona una opción válida (1 al 5).");
+        await this.sendAndLog(jid, "⚠️ Por favor, selecciona una opción válida (1 al 5).");
         break;
     }
   }
@@ -200,7 +225,7 @@ responde con las opciones numericas segun corresponda.`;
   
   👌 Con esta información puedo pasarte con un asesor para enviarte precios y tiempos de producción.`;
       
-      await this.whatsappService.sendMessage(jid, msgDatos);
+      await this.sendAndLog(jid, msgDatos);
       
       await this.statusRepo.update({ user_number: jid }, { estatus: 0, menu: 3 });
 
@@ -211,12 +236,12 @@ responde con las opciones numericas segun corresponda.`;
 
   Si en el futuro tu marca requiere esa cantidad, estaremos felices de ayudarte 💛`;
       
-      await this.whatsappService.sendMessage(jid, msgDespedida);
+      await this.sendAndLog(jid, msgDespedida);
       
       await this.statusRepo.delete({ user_number: jid });
 
     } else {
-      await this.whatsappService.sendMessage(jid, "⚠️ Por favor, selecciona *1* o *2*.");
+      await this.sendAndLog(jid, "⚠️ Por favor, selecciona *1* o *2*.");
     }
   }
 
@@ -237,7 +262,7 @@ responde con las opciones numericas segun corresponda.`;
 
   Con esta información te envío precios y tiempos de producción 😊`;
       
-      await this.whatsappService.sendMessage(jid, msgDatos);
+      await this.sendAndLog(jid, msgDatos);
       
       // Deshabilitamos el bot para que el asesor reciba la data
       await this.statusRepo.update({ user_number: jid }, { estatus: 0 });
@@ -250,13 +275,13 @@ responde con las opciones numericas segun corresponda.`;
 
   Si en el futuro tu marca requiere esa cantidad, estaremos felices de apoyarte 💛`;
       
-      await this.whatsappService.sendMessage(jid, msgDespedida);
+      await this.sendAndLog(jid, msgDespedida);
       
       // Eliminamos el registro para que pueda reingresar como usuario nuevo
       await this.statusRepo.delete({ user_number: jid });
 
     } else {
-      await this.whatsappService.sendMessage(jid, "⚠️ Por favor, selecciona *1* o *2*.");
+      await this.sendAndLog(jid, "⚠️ Por favor, selecciona *1* o *2*.");
     }
   }
 
@@ -274,7 +299,7 @@ responde con las opciones numericas segun corresponda.`;
 
   *Envíanos tu logo o una referencia visual* y un asesor humano validará la viabilidad técnica de inmediato. 😊`;
       
-      await this.whatsappService.sendMessage(jid, msgDatos);
+      await this.sendAndLog(jid, msgDatos);
       
       // Deshabilitamos el bot para la intervención del asesor
       await this.statusRepo.update({ user_number: jid }, { estatus: 0 });
@@ -285,13 +310,13 @@ responde con las opciones numericas segun corresponda.`;
 
   Si en el futuro tu volumen de producción aumenta, ¡en *Marca-Tex* estaremos listos para fabricar las mejores garras para tu marca! 🚀"`;
       
-      await this.whatsappService.sendMessage(jid, msgDespedida);
+      await this.sendAndLog(jid, msgDespedida);
       
       // Eliminamos de la tabla de status para que pueda volver a cotizar otro producto luego
       await this.statusRepo.delete({ user_number: jid });
 
     } else {
-      await this.whatsappService.sendMessage(jid, "⚠️ Por favor, selecciona *1* o *2*.");
+      await this.sendAndLog(jid, "⚠️ Por favor, selecciona *1* o *2*.");
     }
   }
 }

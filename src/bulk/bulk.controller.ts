@@ -83,7 +83,7 @@ async uploadCsv(
       success: true,
       message: `Proceso iniciado con ${records.length} contactos y ${templates.length} plantillas rotando.`,
     };
-  } catch (error) {
+  } catch (error:any) {
     throw new BadRequestException('Error: ' + error.message);
   }
 }

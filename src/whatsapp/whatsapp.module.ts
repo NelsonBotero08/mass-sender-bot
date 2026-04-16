@@ -9,10 +9,11 @@ import { ChatbotService } from './chatBot.service';
 import { BotStatus } from './entities/botStatus.entity'; 
 import { Contact } from './entities/contact.entity';
 import { ContactService } from './contact.service';
+import { MessageLog } from './entities/messageLog.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Message, Conversation, Template, BotStatus, Contact])
+    TypeOrmModule.forFeature([Message, Conversation, Template, BotStatus, Contact, MessageLog])
   ],
   providers: [WhatsappService, ChatbotService, ContactService],
   exports: [WhatsappService, ChatbotService,  ContactService], 

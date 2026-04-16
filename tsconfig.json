@@ -9,13 +9,15 @@
     "target": "ES2023",
     "sourceMap": true,
     "outDir": "./dist",
-    "baseUrl": "./",
+    "baseUrl": "./", 
+    "ignoreDeprecations": "6.0", // <-- Agrega esto para silenciar el aviso de baseUrl
     "incremental": true,
     "skipLibCheck": true,
     "strictNullChecks": true,
     "forceConsistentCasingInFileNames": true,
     "noImplicitAny": false,
     "strictBindCallApply": false,
-    "noFallthroughCasesInSwitch": false
+    "noFallthroughCasesInSwitch": false,
+    "strictPropertyInitialization": false // <-- Esto ya debería quitar el error de las entidades
   }
 }

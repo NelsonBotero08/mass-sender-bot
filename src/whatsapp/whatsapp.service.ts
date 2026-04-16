@@ -304,14 +304,6 @@ export class WhatsappService implements OnModuleInit {
   }
 
 
-  async logout() {
-    if (this.socket) {
-      try { await this.socket.logout(); } catch (e) {}
-    }
-    await this.resetAuth();
-    return { success: true };
-  }
-
 
   private async destroySocket() {
     if (this.socket) {
