@@ -18,6 +18,5 @@
     "noImplicitAny": false,
     "strictBindCallApply": false,
     "noFallthroughCasesInSwitch": false,
-    "strictPropertyInitialization": false // <-- Esto ya debería quitar el error de las entidades
   }
 }

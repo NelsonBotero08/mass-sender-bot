@@ -186,7 +186,7 @@ export class WhatsappService implements OnModuleInit {
         await this.socket.sendPresenceUpdate('paused', jid);
         return sentMsg;
       }
-    } catch (error) {
+    } catch (error: any) {
       this.logger.error(`Error enviando mensaje: ${error.message}`);
     }
   }
@@ -264,7 +264,7 @@ export class WhatsappService implements OnModuleInit {
             await delay(waitTime);
           }
 
-        } catch (e) {
+        } catch (e:any) {
           this.logger.error(`❌ Error en ${contact.telefono}: ${e.message}`);
           
           // Guardar registro de fallo para que el asesor sepa que no se envió
@@ -278,7 +278,7 @@ export class WhatsappService implements OnModuleInit {
         }
       }
       this.logger.log('🏁 Proceso masivo finalizado.');
-    } catch (error) {
+    } catch (error:any) {
       this.logger.error(`❌ Error crítico en envío masivo: ${error.message}`);
     }
   }
@@ -357,7 +357,7 @@ export class WhatsappService implements OnModuleInit {
         }
         this.logger.log(`✅ Carpeta de imágenes limpia: ${files.length} archivos eliminados.`);
       }
-    } catch (error) {
+    } catch (error:any) {
       this.logger.error(`❌ Error limpiando carpeta uploads: ${error.message}`);
     }
   }
