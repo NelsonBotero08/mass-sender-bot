@@ -2,8 +2,8 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, In, MoreThanOrEqual, MoreThan } from 'typeorm';
 import { Template } from '../whatsapp/entities/template.entity';
-import { Message } from 'src/whatsapp/entities/message.entity';
-import { Contact } from 'src/whatsapp/entities/contact.entity';
+import { Message } from '../whatsapp/entities/message.entity';
+import { Contact } from '../whatsapp/entities/contact.entity';
 
 @Injectable()
 export class BulkService {
