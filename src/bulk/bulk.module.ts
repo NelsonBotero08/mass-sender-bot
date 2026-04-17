@@ -6,7 +6,7 @@ import { WhatsappModule } from '../whatsapp/whatsapp.module';
 import { Message } from '../whatsapp/entities/message.entity';
 import { Template } from '../whatsapp/entities/template.entity'; 
 import { BulkService } from './bulk.service';
-import { Contact } from 'src/whatsapp/entities/contact.entity';
+import { Contact } from '../whatsapp/entities/contact.entity';
 import { HealthController } from './health.controller';
 import { MaintenanceService } from './maintenance.service';
 
