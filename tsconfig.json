@@ -4,19 +4,13 @@
     "target": "ES2023",
     "outDir": "./dist",
 
-    "baseUrl": "./", 
-    "paths": {
-      "@/*": ["src/*"]
-    },
-
-    "ignoreDeprecations": "6.0",
-
     "declaration": true,
     "removeComments": true,
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
     "sourceMap": true,
+
     "incremental": true,
     "skipLibCheck": true,
     "strictNullChecks": true,
