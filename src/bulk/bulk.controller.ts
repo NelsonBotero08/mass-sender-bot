@@ -2,13 +2,13 @@ import { Controller, Post, UseInterceptors, UploadedFile, Body, BadRequestExcept
 import { FileInterceptor } from '@nestjs/platform-express';
 import { WhatsappService } from '../whatsapp/whatsapp.service';
 import { parse } from 'csv-parse/sync';
-import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-import { RolesGuard } from 'src/auth/roles.guard';
-import { UserRole } from 'src/auth/entities/user.entity';
+import { JwtAuthGuard } from '@/auth/jwt-auth.guard';
+import { RolesGuard } from '@/auth/roles.guard';
+import { UserRole } from '@/auth/entities/user.entity';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, MoreThan, Repository } from 'typeorm';
-import { Message } from 'src/whatsapp/entities/message.entity';
-import { Template } from 'src/whatsapp/entities/template.entity';
+import { Message } from '@/whatsapp/entities/message.entity';
+import { Template } from '@/whatsapp/entities/template.entity';
 import { BulkService } from './bulk.service';
 
 interface CsvRecord {
