@@ -165,20 +165,31 @@ export class WhatsappService implements OnModuleInit {
 
       await delay(2000);
 
-      if (imagePath) {
-        await this.socket.sendPresenceUpdate('composing', jid);
+      if (imagePath && imagePath.length > 0) {
+        let sentMsg;
         
-        await delay(4000); 
+        for (let i = 0; i < imagePath.length; i++) {
+          const path = imagePath[i];
+          
+          // Simulamos que estamos "enviando un archivo"
+          await this.socket.sendPresenceUpdate('composing', jid);
+          await delay(3000 + Math.random() * 2000); // Delay aleatorio entre 3 y 5 segundos
 
-        const sentMsg = await this.socket.sendMessage(jid, {
-          image: { url: imagePath }, 
-          caption: text 
-        });
+          sentMsg = await this.socket.sendMessage(jid, {
+            image: { url: path },
+            // Ponemos el texto (caption) solo en la primera imagen para que no se repita
+            caption: i === 0 ? text : '' 
+          });
+        }
 
         await this.socket.sendPresenceUpdate('paused', jid);
         return sentMsg;
+
       } else {
+        // --- LÓGICA DE SOLO TEXTO ---
         await this.socket.sendPresenceUpdate('composing', jid);
+        
+        // Tiempo de escritura proporcional al mensaje
         const typingTime = Math.min(text.length * 50, 5000);
         await delay(typingTime);
 

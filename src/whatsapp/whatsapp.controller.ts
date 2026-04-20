@@ -96,35 +96,35 @@ export class WhatsappController {
       @Body() body: { contactIds: string; templateIds: string } 
     ) {
       console.log('--- NUEVA CAMPAÑA ---');
-      console.log('Archivos detectados:', files?.length || 0);
+  
+      // 1. Ya no lanzamos error si files está vacío
+      const hasImages = files && files.length > 0;
+      console.log('¿Tiene imágenes?:', hasImages ? 'SÍ' : 'NO');
       
-      if (!files || files.length === 0) {
-        throw new BadRequestException('Multer no pudo procesar los archivos.');
+      // 2. Procesamos los IDs de forma segura
+      if (!body.contactIds || !body.templateIds) {
+        throw new BadRequestException('Debes seleccionar al menos un contacto y una plantilla.');
       }
-      // 1. Convertimos los strings del body (vienen como "1,2,3") a arreglos
-      const cIds = body.contactIds.split(',')
-        .map(id => parseInt(id.trim()))
-        .filter(id => !isNaN(id)); // Elimina cualquier cosa que no sea un número
 
-      const tIds = body.templateIds.split(',')
-        .map(id => parseInt(id.trim()))
-        .filter(id => !isNaN(id));
+      const cIds = body.contactIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+      const tIds = body.templateIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
 
-      // 2. Buscamos los contactos y plantillas reales en la DB
+      // 3. Buscamos en la DB
       const contacts = await this.contactService.findByIds(cIds);
       const templates = await this.templateRepo.findBy({ id: In(tIds) });
       
-      if (contacts.length === 0) throw new BadRequestException('No hay contactos seleccionados');
+      if (contacts.length === 0) throw new BadRequestException('No hay contactos válidos seleccionados');
 
-      const imagePaths = files.map(f => resolve(f.path));
+      // 4. Mapeamos las rutas solo si existen archivos
+      const imagePaths = hasImages ? files.map(f => resolve(f.path)) : [];
       const templateTexts = templates.map(t => t.content);
 
-      // 3. Ejecutar con simulación humana
+      // 5. Ejecutar (Tu servicio de WhatsApp debe estar preparado para recibir un array vacío en imagePaths)
       await this.whatsappService.sendMassMessages(contacts, templateTexts, imagePaths);
 
       return { 
         success: true, 
-        message: `Campaña iniciada para ${contacts.length} contactos desde el móvil.` 
+        message: `Campaña iniciada para ${contacts.length} contactos.` 
       };
     }
 
