@@ -71,53 +71,62 @@ export class WhatsappController {
   }
 
   @Post('start-mobile-campaign')
-@UseInterceptors(FilesInterceptor('images', 5, { 
-  storage: diskStorage({
-    destination: (req, file, cb) => {
-      if (!fs.existsSync(uploadPath)) {
-        fs.mkdirSync(uploadPath, { recursive: true });
+    @UseInterceptors(FilesInterceptor('images', 5, { 
+     storage: diskStorage({
+      destination: (req, file, cb) => {
+        try {
+          // Forzamos la creación por si acaso
+          if (!fs.existsSync(uploadPath)) {
+            fs.mkdirSync(uploadPath, { recursive: true });
+          }
+          cb(null, uploadPath);
+        } catch (err:any) {
+          console.error('❌ Error en Multer Destination:', err);
+          cb(err, uploadPath);
+        }
+      },
+      filename: (req, file, cb) => {
+        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+        cb(null, `${uniqueSuffix}${extname(file.originalname).toLowerCase()}`);
+      },
+    }),
+    }))
+    async startMobileCampaign(
+      @UploadedFiles() files: Array<Express.Multer.File>,
+      @Body() body: { contactIds: string; templateIds: string } 
+    ) {
+      console.log('--- NUEVA CAMPAÑA ---');
+      console.log('Archivos detectados:', files?.length || 0);
+      
+      if (!files || files.length === 0) {
+        throw new BadRequestException('Multer no pudo procesar los archivos.');
       }
-      cb(null, uploadPath);
-    },
-    filename: (req, file, cb) => {
-      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-      cb(null, `${uniqueSuffix}${extname(file.originalname).toLowerCase()}`);
-    },
-  }),
-}))
-async startMobileCampaign(
-  @UploadedFiles() files: Array<Express.Multer.File>,
-  @Body() body: { contactIds: string; templateIds: string } 
-) {
-  console.log('--- NUEVA CAMPAÑA ---');
-  // Ahora files puede ser undefined o vacío sin lanzar error
-  const imageCount = files?.length || 0;
-  console.log('Archivos detectados:', imageCount);
+      // 1. Convertimos los strings del body (vienen como "1,2,3") a arreglos
+      const cIds = body.contactIds.split(',')
+        .map(id => parseInt(id.trim()))
+        .filter(id => !isNaN(id)); // Elimina cualquier cosa que no sea un número
 
-  if (!body.contactIds || !body.templateIds) {
-    throw new BadRequestException('Faltan contactos o plantillas.');
-  }
+      const tIds = body.templateIds.split(',')
+        .map(id => parseInt(id.trim()))
+        .filter(id => !isNaN(id));
 
-  const cIds = body.contactIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
-  const tIds = body.templateIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+      // 2. Buscamos los contactos y plantillas reales en la DB
+      const contacts = await this.contactService.findByIds(cIds);
+      const templates = await this.templateRepo.findBy({ id: In(tIds) });
+      
+      if (contacts.length === 0) throw new BadRequestException('No hay contactos seleccionados');
 
-  const contacts = await this.contactService.findByIds(cIds);
-  const templates = await this.templateRepo.findBy({ id: In(tIds) });
-  
-  if (contacts.length === 0) throw new BadRequestException('No hay contactos válidos');
+      const imagePaths = files.map(f => resolve(f.path));
+      const templateTexts = templates.map(t => t.content);
 
-  // Mapeamos rutas si existen, si no, enviamos array vacío
-  const imagePaths = files ? files.map(f => resolve(f.path)) : [];
-  const templateTexts = templates.map(t => t.content);
+      // 3. Ejecutar con simulación humana
+      await this.whatsappService.sendMassMessages(contacts, templateTexts, imagePaths);
 
-  // Ejecución en segundo plano para no bloquear el request
-  this.whatsappService.sendMassMessages(contacts, templateTexts, imagePaths);
-
-  return { 
-    success: true, 
-    message: `Campaña iniciada para ${contacts.length} contactos con ${imageCount} imágenes.` 
-  };
-}
+      return { 
+        success: true, 
+        message: `Campaña iniciada para ${contacts.length} contactos desde el móvil.` 
+      };
+    }
 
 
   @Post('contacts/manual')
