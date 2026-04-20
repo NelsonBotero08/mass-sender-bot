@@ -71,62 +71,53 @@ export class WhatsappController {
   }
 
   @Post('start-mobile-campaign')
-    @UseInterceptors(FilesInterceptor('images', 5, { 
-     storage: diskStorage({
-      destination: (req, file, cb) => {
-        try {
-          // Forzamos la creación por si acaso
-          if (!fs.existsSync(uploadPath)) {
-            fs.mkdirSync(uploadPath, { recursive: true });
-          }
-          cb(null, uploadPath);
-        } catch (err:any) {
-          console.error('❌ Error en Multer Destination:', err);
-          cb(err, uploadPath);
-        }
-      },
-      filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-        cb(null, `${uniqueSuffix}${extname(file.originalname).toLowerCase()}`);
-      },
-    }),
-    }))
-    async startMobileCampaign(
-      @UploadedFiles() files: Array<Express.Multer.File>,
-      @Body() body: { contactIds: string; templateIds: string } 
-    ) {
-      console.log('--- NUEVA CAMPAÑA ---');
-  
-      // 1. Ya no lanzamos error si files está vacío
-      const hasImages = files && files.length > 0;
-      console.log('¿Tiene imágenes?:', hasImages ? 'SÍ' : 'NO');
-      
-      // 2. Procesamos los IDs de forma segura
-      if (!body.contactIds || !body.templateIds) {
-        throw new BadRequestException('Debes seleccionar al menos un contacto y una plantilla.');
+@UseInterceptors(FilesInterceptor('images', 5, { 
+  storage: diskStorage({
+    destination: (req, file, cb) => {
+      if (!fs.existsSync(uploadPath)) {
+        fs.mkdirSync(uploadPath, { recursive: true });
       }
+      cb(null, uploadPath);
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+      cb(null, `${uniqueSuffix}${extname(file.originalname).toLowerCase()}`);
+    },
+  }),
+}))
+async startMobileCampaign(
+  @UploadedFiles() files: Array<Express.Multer.File>,
+  @Body() body: { contactIds: string; templateIds: string } 
+) {
+  console.log('--- NUEVA CAMPAÑA ---');
+  // Ahora files puede ser undefined o vacío sin lanzar error
+  const imageCount = files?.length || 0;
+  console.log('Archivos detectados:', imageCount);
 
-      const cIds = body.contactIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
-      const tIds = body.templateIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+  if (!body.contactIds || !body.templateIds) {
+    throw new BadRequestException('Faltan contactos o plantillas.');
+  }
 
-      // 3. Buscamos en la DB
-      const contacts = await this.contactService.findByIds(cIds);
-      const templates = await this.templateRepo.findBy({ id: In(tIds) });
-      
-      if (contacts.length === 0) throw new BadRequestException('No hay contactos válidos seleccionados');
+  const cIds = body.contactIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
+  const tIds = body.templateIds.split(',').map(id => parseInt(id.trim())).filter(id => !isNaN(id));
 
-      // 4. Mapeamos las rutas solo si existen archivos
-      const imagePaths = hasImages ? files.map(f => resolve(f.path)) : [];
-      const templateTexts = templates.map(t => t.content);
+  const contacts = await this.contactService.findByIds(cIds);
+  const templates = await this.templateRepo.findBy({ id: In(tIds) });
+  
+  if (contacts.length === 0) throw new BadRequestException('No hay contactos válidos');
 
-      // 5. Ejecutar (Tu servicio de WhatsApp debe estar preparado para recibir un array vacío en imagePaths)
-      await this.whatsappService.sendMassMessages(contacts, templateTexts, imagePaths);
+  // Mapeamos rutas si existen, si no, enviamos array vacío
+  const imagePaths = files ? files.map(f => resolve(f.path)) : [];
+  const templateTexts = templates.map(t => t.content);
 
-      return { 
-        success: true, 
-        message: `Campaña iniciada para ${contacts.length} contactos.` 
-      };
-    }
+  // Ejecución en segundo plano para no bloquear el request
+  this.whatsappService.sendMassMessages(contacts, templateTexts, imagePaths);
+
+  return { 
+    success: true, 
+    message: `Campaña iniciada para ${contacts.length} contactos con ${imageCount} imágenes.` 
+  };
+}
 
 
   @Post('contacts/manual')
