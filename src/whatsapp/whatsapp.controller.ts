@@ -71,60 +71,80 @@ export class WhatsappController {
   }
 
   @Post('start-mobile-campaign')
-    @UseInterceptors(FilesInterceptor('images', 5, { 
-     storage: diskStorage({
-      destination: (req, file, cb) => {
-        try {
-          // Forzamos la creación por si acaso
-          if (!fs.existsSync(uploadPath)) {
-            fs.mkdirSync(uploadPath, { recursive: true });
-          }
-          cb(null, uploadPath);
-        } catch (err:any) {
-          console.error('❌ Error en Multer Destination:', err);
-          cb(err, uploadPath);
+@UseInterceptors(FilesInterceptor('images', 5, { 
+  storage: diskStorage({
+    destination: (req, file, cb) => {
+      try {
+        if (!fs.existsSync(uploadPath)) {
+          fs.mkdirSync(uploadPath, { recursive: true });
         }
-      },
-      filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-        cb(null, `${uniqueSuffix}${extname(file.originalname).toLowerCase()}`);
-      },
-    }),
-    }))
-    async startMobileCampaign(
-      @UploadedFiles() files: Array<Express.Multer.File>,
-      @Body() body: { contactIds: string; templateIds: string } 
-    ) {
-      console.log('--- NUEVA CAMPAÑA ---');
-      console.log('Archivos detectados:', files?.length || 0);
-      
-      // 1. Convertimos los strings del body (vienen como "1,2,3") a arreglos
-      const cIds = body.contactIds.split(',')
-        .map(id => parseInt(id.trim()))
-        .filter(id => !isNaN(id)); // Elimina cualquier cosa que no sea un número
+        cb(null, uploadPath);
+      } catch (err: any) {
+        console.error('❌ Error en Multer Destination:', err);
+        cb(err, uploadPath);
+      }
+    },
+    filename: (req, file, cb) => {
+      const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
+      cb(null, `${uniqueSuffix}${extname(file.originalname).toLowerCase()}`);
+    },
+  }),
+}))
+async startMobileCampaign(
+  @UploadedFiles() files: Array<Express.Multer.File>,
+  // Hacemos templateIds opcional con '?'
+  @Body() body: { contactIds: string; templateIds?: string } 
+) {
+  console.log('--- NUEVA CAMPAÑA ---');
+  console.log('Archivos detectados:', files?.length || 0);
+  
+  // 1. Validar Contactos (Obligatorio)
+  if (!body.contactIds || body.contactIds.trim() === "") {
+    throw new BadRequestException('No hay contactos seleccionados');
+  }
 
-      const tIds = body.templateIds.split(',')
-        .map(id => parseInt(id.trim()))
-        .filter(id => !isNaN(id));
+  const cIds = body.contactIds.split(',')
+    .map(id => parseInt(id.trim()))
+    .filter(id => !isNaN(id));
 
-      // 2. Buscamos los contactos y plantillas reales en la DB
-      const contacts = await this.contactService.findByIds(cIds);
+  const contacts = await this.contactService.findByIds(cIds);
+  if (contacts.length === 0) {
+    throw new BadRequestException('No se encontraron contactos en la base de datos');
+  }
+
+  // 2. Procesar Plantillas (Opcional - Aquí estaba el fallo)
+  let templateTexts: string[] = [];
+  
+  // Solo intentamos procesar si templateIds existe y no es solo espacios
+  if (body.templateIds && body.templateIds.trim() !== "") {
+    const tIds = body.templateIds.split(',')
+      .map(id => parseInt(id.trim()))
+      .filter(id => !isNaN(id));
+
+    if (tIds.length > 0) {
       const templates = await this.templateRepo.findBy({ id: In(tIds) });
-      
-      if (contacts.length === 0) throw new BadRequestException('No hay contactos seleccionados');
-
-      const imagePaths = files.map(f => resolve(f.path));
-      const templateTexts = templates.map(t => t.content);
-
-      // 3. Ejecutar con simulación humana
-      await this.whatsappService.sendMassMessages(contacts, templateTexts, imagePaths);
-
-      return { 
-        success: true, 
-        message: `Campaña iniciada para ${contacts.length} contactos desde el móvil.` 
-      };
+      templateTexts = templates.map(t => t.content);
     }
+  }
 
+  // 3. Procesar Imágenes
+  const imagePaths = files ? files.map(f => resolve(f.path)) : [];
+
+  // 4. Validación de contenido mínimo
+  if (templateTexts.length === 0 && imagePaths.length === 0) {
+    throw new BadRequestException('Debes seleccionar al menos una plantilla de texto o una imagen');
+  }
+
+  // 5. Ejecutar proceso en segundo plano (sin await para no bloquear el front)
+  // No usamos await para que el asesor reciba respuesta inmediata
+  this.whatsappService.sendMassMessages(contacts, templateTexts, imagePaths)
+    .catch(err => console.error("Error en proceso masivo:", err));
+
+  return { 
+    success: true, 
+    message: `Campaña iniciada para ${contacts.length} contactos.` 
+  };
+}
 
   @Post('contacts/manual')
   async addManualContact(
