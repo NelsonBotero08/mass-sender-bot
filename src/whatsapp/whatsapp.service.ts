@@ -18,6 +18,8 @@ import * as path from 'path';
 import { BotStatus } from './entities/botStatus.entity';
 import { ChatbotService } from './chatBot.service';
 import * as qrcodeTerminal from 'qrcode-terminal';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 
 
 
@@ -208,6 +210,7 @@ export class WhatsappService implements OnModuleInit {
       const jid = `${contact.telefono}@s.whatsapp.net`;
 
       // 1. Verificación Antiduplicado
+      /*
       const alreadySent = await this.messageRepo.findOne({
         where: {
           phone: contact.telefono,
@@ -222,6 +225,7 @@ export class WhatsappService implements OnModuleInit {
         this.logger.log(`⏭️ ${contact.telefono} ya recibió mensaje hoy, saltando...`);
         continue;
       }
+        */
 
       // 2. Rotación Segura de Plantilla (Evita división por cero)
       let messageText = '';
