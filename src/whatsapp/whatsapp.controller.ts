@@ -98,7 +98,6 @@ export class WhatsappController {
       console.log('--- NUEVA CAMPAÑA ---');
       console.log('Archivos detectados:', files?.length || 0);
       
-      
       // 1. Convertimos los strings del body (vienen como "1,2,3") a arreglos
       const cIds = body.contactIds.split(',')
         .map(id => parseInt(id.trim()))
@@ -114,13 +113,8 @@ export class WhatsappController {
       
       if (contacts.length === 0) throw new BadRequestException('No hay contactos seleccionados');
 
-      const imagePaths = files ? files.map(f => resolve(f.path)) : [];
+      const imagePaths = files.map(f => resolve(f.path));
       const templateTexts = templates.map(t => t.content);
-
-      // Verifica que al menos haya ALGO que enviar
-      if (templateTexts.length === 0 && imagePaths.length === 0) {
-        throw new BadRequestException('Debes seleccionar al menos una plantilla de texto o una imagen.');
-      }
 
       // 3. Ejecutar con simulación humana
       await this.whatsappService.sendMassMessages(contacts, templateTexts, imagePaths);
