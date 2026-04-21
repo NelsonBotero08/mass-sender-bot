@@ -158,130 +158,132 @@ export class WhatsappService implements OnModuleInit {
 
 
   async sendMessage(phone: string, text: string, imagePath?: string) {
-    if (!this.socket) return;
+  if (!this.socket) return;
 
-    try {
-      const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
+  try {
+    const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
+    const hasText = text && text.trim().length > 0;
 
-      await delay(2000);
+    await delay(2000);
 
-      if (imagePath) {
-        await this.socket.sendPresenceUpdate('composing', jid);
-        
-        await delay(4000); 
+    if (imagePath) {
+      // Si hay imagen, simulamos "composing" un momento breve
+      await this.socket.sendPresenceUpdate('composing', jid);
+      await delay(hasText ? 4000 : 2000); 
 
-        const sentMsg = await this.socket.sendMessage(jid, {
-          image: { url: imagePath }, 
-          caption: text 
-        });
+      const sentMsg = await this.socket.sendMessage(jid, {
+        image: { url: imagePath }, 
+        caption: text || '' // Si no hay texto, caption vacío
+      });
 
-        await this.socket.sendPresenceUpdate('paused', jid);
-        return sentMsg;
-      } else {
-        await this.socket.sendPresenceUpdate('composing', jid);
-        const typingTime = Math.min(text.length * 50, 5000);
-        await delay(typingTime);
+      await this.socket.sendPresenceUpdate('paused', jid);
+      return sentMsg;
+    } else {
+      // Solo texto
+      if (!hasText) return; // Evitamos enviar mensajes vacíos
 
-        const sentMsg = await this.socket.sendMessage(jid, { text });
-        await this.socket.sendPresenceUpdate('paused', jid);
-        return sentMsg;
-      }
-    } catch (error: any) {
-      this.logger.error(`Error enviando mensaje: ${error.message}`);
+      await this.socket.sendPresenceUpdate('composing', jid);
+      const typingTime = Math.min(text.length * 50, 5000);
+      await delay(typingTime);
+
+      const sentMsg = await this.socket.sendMessage(jid, { text });
+      await this.socket.sendPresenceUpdate('paused', jid);
+      return sentMsg;
     }
+  } catch (error: any) {
+    this.logger.error(`Error enviando mensaje a ${phone}: ${error.message}`);
   }
+}
 
-  async sendMassMessages(contacts: any[], customTemplates: string[], imagePaths: string[] = []) {
-    try {
-      if (!this.socket) return;
-      this.logger.log(`🚀 Iniciando envío masivo a ${contacts.length} contactos.`);
+  async sendMassMessages(contacts: any[], customTemplates: string[] = [], imagePaths: string[] = []) {
+  try {
+    if (!this.socket) return;
+    this.logger.log(`🚀 Iniciando envío masivo a ${contacts.length} contactos.`);
 
-      // Fecha de hoy (00:00:00) para evitar duplicados en el mismo día
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
 
-      
+    for (let i = 0; i < contacts.length; i++) {
+      const contact = contacts[i];
+      const jid = `${contact.telefono}@s.whatsapp.net`;
 
-      for (let i = 0; i < contacts.length; i++) {
-        const contact = contacts[i];
-        
-        const jid = `${contact.telefono}@s.whatsapp.net`;
+      // 1. Verificación Antiduplicado
+      const alreadySent = await this.messageRepo.findOne({
+        where: {
+          phone: contact.telefono,
+          type: 'OUTGOING',
+          status: 'SENT',
+          sentAt: MoreThanOrEqual(today)
+        },
+        order: { sentAt: 'DESC' }
+      });
 
-        // --- 🛡️ LÓGICA DE VERIFICACIÓN ANTIDUPLICADO ---
-        const alreadySent = await this.messageRepo.findOne({
-          where: {
-            phone: contact.telefono,
-            type: 'OUTGOING',
-            status: 'SENT',
-            sentAt: MoreThanOrEqual(today) // Verificamos si hay mensajes desde las 00:00 de hoy
-          },
-          order: { sentAt: 'DESC' }
-        });
+      if (alreadySent) {
+        this.logger.log(`⏭️ ${contact.telefono} ya recibió mensaje hoy, saltando...`);
+        continue;
+      }
 
-        if (alreadySent) {
-          this.logger.log(`⏭️ ${contact.telefono} ya recibió mensaje hoy (${alreadySent.sentAt.toLocaleTimeString()}), saltando...`);
-          continue;
-        }
-        // -----------------------------------------------
-
-        // Rotación secuencial de Plantilla e Imagen
+      // 2. Rotación Segura de Plantilla (Evita división por cero)
+      let messageText = '';
+      if (customTemplates.length > 0) {
         const templateIndex = i % customTemplates.length;
-        const messageText = this.parseTemplate(customTemplates[templateIndex], contact);
-        const rawImagePath = imagePaths.length > 0 ? imagePaths[i % imagePaths.length] : undefined;
+        messageText = this.parseTemplate(customTemplates[templateIndex], contact);
+      }
 
-        // 2. Definimos una variable para el path final
-        let finalImagePath: string | undefined = undefined;
+      // 3. Rotación Segura de Imagen
+      let finalImagePath: string | undefined = undefined;
+      if (imagePaths.length > 0) {
+        const rawImagePath = imagePaths[i % imagePaths.length];
+        finalImagePath = path.isAbsolute(rawImagePath) 
+          ? rawImagePath 
+          : path.resolve(rawImagePath);
+      }
 
-        // 3. Solo procesamos el path si realmente existe una imagen
-        if (rawImagePath) {
-          finalImagePath = path.isAbsolute(rawImagePath) 
-            ? rawImagePath 
-            : path.resolve(rawImagePath);
-        }
+      // Validación final: Si no hay ni texto ni imagen, saltamos
+      if (!messageText && !finalImagePath) {
+        this.logger.warn(`⚠️ Saltando contacto ${contact.telefono}: No hay contenido para enviar.`);
+        continue;
+      }
 
-        this.logger.log(`📝 Procesando ${i + 1}/${contacts.length} para ${contact.telefono}...`);
+      this.logger.log(`📝 Procesando ${i + 1}/${contacts.length} para ${contact.telefono}...`);
 
-        try {
-          // Llamamos a sendMessage que ya tiene la simulación humana (composing + delay)
-          
-          const sentMsg = await this.sendMessage(jid, messageText, finalImagePath);
+      try {
+        const sentMsg = await this.sendMessage(jid, messageText, finalImagePath);
 
-          if (sentMsg) {
-            await this.messageRepo.save({
-              phone: contact.telefono,
-              content: messageText + (finalImagePath ? ' [CON IMAGEN]' : ''),
-              status: 'SENT',
-              sentAt: new Date(),
-              type: 'OUTGOING'
-            });
-            this.logger.log(`✅ Mensaje enviado exitosamente a ${contact.telefono}`);
-          }
-
-          // Intervalo anti-bloqueo (solo si no es el último de la lista)
-          if (i < contacts.length - 1) {
-            const waitTime = Math.floor(Math.random() * (95000 - 45000 + 1)) + 45000;
-            this.logger.log(`⏳ Esperando ${waitTime / 1000}s para evitar detección...`);
-            await delay(waitTime);
-          }
-
-        } catch (e:any) {
-          this.logger.error(`❌ Error en ${contact.telefono}: ${e.message}`);
-          
-          // Guardar registro de fallo para que el asesor sepa que no se envió
+        if (sentMsg) {
           await this.messageRepo.save({
             phone: contact.telefono,
-            content: messageText,
-            status: 'FAILED',
+            content: (messageText || 'Imagen enviada') + (finalImagePath ? ' [CON IMAGEN]' : ''),
+            status: 'SENT',
             sentAt: new Date(),
             type: 'OUTGOING'
-          }).catch(() => {});
+          });
+          this.logger.log(`✅ Mensaje enviado exitosamente a ${contact.telefono}`);
         }
+
+        // Intervalo anti-bloqueo
+        if (i < contacts.length - 1) {
+          const waitTime = Math.floor(Math.random() * (95000 - 45000 + 1)) + 45000;
+          this.logger.log(`⏳ Esperando ${waitTime / 1000}s para evitar detección...`);
+          await delay(waitTime);
+        }
+
+      } catch (e: any) {
+        this.logger.error(`❌ Error en ${contact.telefono}: ${e.message}`);
+        await this.messageRepo.save({
+          phone: contact.telefono,
+          content: messageText || 'Fallo envío imagen',
+          status: 'FAILED',
+          sentAt: new Date(),
+          type: 'OUTGOING'
+        }).catch(() => {});
       }
-      this.logger.log('🏁 Proceso masivo finalizado.');
-    } catch (error:any) {
-      this.logger.error(`❌ Error crítico en envío masivo: ${error.message}`);
     }
+    this.logger.log('🏁 Proceso masivo finalizado.');
+  } catch (error: any) {
+    this.logger.error(`❌ Error crítico en envío masivo: ${error.message}`);
   }
+}
 
   // Función auxiliar para procesar múltiples variables
   private parseTemplate(content: string, variables: any): string {
