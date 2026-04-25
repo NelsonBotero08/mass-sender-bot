@@ -157,45 +157,52 @@ export class WhatsappService implements OnModuleInit {
   }
 
 
-  async sendMessage(phone: string, text: string, imagePath?: string, isAuto = false) {
+  async sendMessage(phone: string, text: string, imagePath?: string) {
     if (!this.socket) {
-      this.logger.error("❌ No hay socket de WhatsApp activo");
+      this.logger.error("No hay socket de WhatsApp activo");
       return null;
     }
 
     try {
-      // 1. LIMPIEZA CRÍTICA DE JID: Extraemos solo los números
-      // Esto elimina @lid, @s.whatsapp.net o cualquier otro sufijo
-      const cleanNumber = phone.split('@')[0];
-      const jid = `${cleanNumber}@s.whatsapp.net`;
+      let jid: string;
 
-      this.logger.log(`📤 Enviando mensaje a: ${jid} (Modo Auto: ${isAuto})`);
+      if (phone.includes('@')) {
+        // ✅ ya viene correcto (lid o s.whatsapp.net)
+        jid = phone;
+      } else {
+        // 🔥 aquí resolvemos el jid real
+        const result = await this.socket.onWhatsApp(`${phone}@s.whatsapp.net`);
 
-      // 2. Simulación de presencia: "escribiendo..."
+        if (result?.length && result[0]?.jid) {
+          jid = result[0].jid; // 👈 puede ser lid automáticamente
+        } else {
+          jid = `${phone}@s.whatsapp.net`; // fallback
+        }
+      }
+
+      this.logger.log(`📤 Enviando a: ${jid}`);
+
       await this.socket.sendPresenceUpdate('composing', jid);
-      
-      // Delay inicial de seguridad (humano)
-      await delay(1500);
+      await delay(2000);
 
       let sentMsg;
 
       if (imagePath) {
-        // Si hay imagen, simulamos tiempo de carga
-        await delay(2000); 
+        await delay(2000);
 
         sentMsg = await this.socket.sendMessage(jid, {
-          image: { url: imagePath }, 
-          caption: text || '' 
+          image: { url: imagePath },
+          caption: text || ''
         });
       } else {
-        // Si es texto, calculamos tiempo de escritura basado en la longitud
-        const typingTime = Math.min((text?.length || 10) * 50, 4000);
+        const typingTime = Math.min((text?.length || 10) * 50, 5000);
         await delay(typingTime);
 
-        sentMsg = await this.socket.sendMessage(jid, { text: text || '' });
+        sentMsg = await this.socket.sendMessage(jid, {
+          text: text || ''
+        });
       }
 
-      // 3. Finalizar estado de escritura
       await this.socket.sendPresenceUpdate('paused', jid);
 
       return sentMsg;
