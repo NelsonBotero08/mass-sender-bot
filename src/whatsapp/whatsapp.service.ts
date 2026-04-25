@@ -157,47 +157,50 @@ export class WhatsappService implements OnModuleInit {
   }
 
 
-  async sendMessage(phone: string, text: string, imagePath?: string) {
-  if (!this.socket) {
-    this.logger.error("No hay socket de WhatsApp activo");
-    return null;
-  }
-
-  try {
-    const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
-
-    // Simulación de "escribiendo..."
-    await this.socket.sendPresenceUpdate('composing', jid);
-    
-    // Delay inicial de seguridad
-    await delay(2000);
-
-    if (imagePath) {
-      // Si hay imagen, esperamos un poco más para simular la carga
-      await delay(2000); 
-
-      const sentMsg = await this.socket.sendMessage(jid, {
-        image: { url: imagePath }, 
-        // Importante: Si 'text' es vacío, Baileys necesita un string vacío "" para no fallar
-        caption: text || '' 
-      });
-
-      await this.socket.sendPresenceUpdate('paused', jid);
-      return sentMsg;
-    } else {
-      // Si es solo texto
-      const typingTime = Math.min((text?.length || 10) * 50, 5000);
-      await delay(typingTime);
-
-      const sentMsg = await this.socket.sendMessage(jid, { text: text || '' });
-      await this.socket.sendPresenceUpdate('paused', jid);
-      return sentMsg;
+  async sendMessage(phone: string, text: string, imagePath?: string, isAuto = false) {
+    if (!this.socket) {
+      this.logger.error("No hay socket de WhatsApp activo");
+      return null;
     }
-  } catch (error: any) {
-    this.logger.error(`Error enviando a ${phone}: ${error.message}`);
-    return null;
+
+    try {
+      // Asegurar formato correcto de JID sin duplicar @s.whatsapp.net
+      const cleanNumber = phone.split('@')[0];
+      const jid = `${cleanNumber}@s.whatsapp.net`;
+
+      // 1. Simulación de "escribiendo..."
+      await this.socket.sendPresenceUpdate('composing', jid);
+      
+      // 2. Delay inicial de seguridad
+      await delay(1500);
+
+      let sentMsg;
+
+      if (imagePath) {
+        // Simular tiempo de carga de media
+        await delay(2000); 
+
+        sentMsg = await this.socket.sendMessage(jid, {
+          image: { url: imagePath }, 
+          caption: text || '' 
+        });
+      } else {
+        // Simular tiempo de escritura basado en longitud
+        const typingTime = Math.min((text?.length || 10) * 50, 4000);
+        await delay(typingTime);
+
+        sentMsg = await this.socket.sendMessage(jid, { text: text || '' });
+      }
+
+      // 3. Finalizar estado de escritura
+      await this.socket.sendPresenceUpdate('paused', jid);
+
+      return sentMsg;
+    } catch (error: any) {
+      this.logger.error(`Error enviando a ${phone}: ${error.message}`);
+      return null;
+    }
   }
-}
 
   async sendMassMessages(contacts: any[], customTemplates: string[] = [], imagePaths: string[] = []) {
   try {

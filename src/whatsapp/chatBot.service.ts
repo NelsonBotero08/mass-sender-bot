@@ -29,7 +29,7 @@ export class ChatbotService {
     });
 
     // Enviar por WhatsApp
-    return await this.sendAndLog(jid, message);
+    return await this.whatsappService.sendMessage(jid, message);
   }
 
   async handleBotLogic(from: string, body: string) {
