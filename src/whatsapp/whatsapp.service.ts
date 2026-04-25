@@ -159,25 +159,28 @@ export class WhatsappService implements OnModuleInit {
 
   async sendMessage(phone: string, text: string, imagePath?: string, isAuto = false) {
     if (!this.socket) {
-      this.logger.error("No hay socket de WhatsApp activo");
+      this.logger.error("❌ No hay socket de WhatsApp activo");
       return null;
     }
 
     try {
-      // Asegurar formato correcto de JID sin duplicar @s.whatsapp.net
+      // 1. LIMPIEZA CRÍTICA DE JID: Extraemos solo los números
+      // Esto elimina @lid, @s.whatsapp.net o cualquier otro sufijo
       const cleanNumber = phone.split('@')[0];
       const jid = `${cleanNumber}@s.whatsapp.net`;
 
-      // 1. Simulación de "escribiendo..."
+      this.logger.log(`📤 Enviando mensaje a: ${jid} (Modo Auto: ${isAuto})`);
+
+      // 2. Simulación de presencia: "escribiendo..."
       await this.socket.sendPresenceUpdate('composing', jid);
       
-      // 2. Delay inicial de seguridad
+      // Delay inicial de seguridad (humano)
       await delay(1500);
 
       let sentMsg;
 
       if (imagePath) {
-        // Simular tiempo de carga de media
+        // Si hay imagen, simulamos tiempo de carga
         await delay(2000); 
 
         sentMsg = await this.socket.sendMessage(jid, {
@@ -185,7 +188,7 @@ export class WhatsappService implements OnModuleInit {
           caption: text || '' 
         });
       } else {
-        // Simular tiempo de escritura basado en longitud
+        // Si es texto, calculamos tiempo de escritura basado en la longitud
         const typingTime = Math.min((text?.length || 10) * 50, 4000);
         await delay(typingTime);
 
@@ -196,8 +199,9 @@ export class WhatsappService implements OnModuleInit {
       await this.socket.sendPresenceUpdate('paused', jid);
 
       return sentMsg;
+
     } catch (error: any) {
-      this.logger.error(`Error enviando a ${phone}: ${error.message}`);
+      this.logger.error(`❌ Error enviando a ${phone}: ${error.message}`);
       return null;
     }
   }
